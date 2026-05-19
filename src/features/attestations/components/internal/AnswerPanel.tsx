@@ -19,11 +19,17 @@ export function AnswerPanel({
 	return (
 		<section className="border border-[#20211f] bg-[#ffffff]">
 			<div className="flex items-center justify-between border-[#20211f] border-b px-4 py-3">
-				<div>
+				<div className="min-w-0">
 					<p className="text-[#6f716d] text-sm">AI answer</p>
-					<h2 className="font-semibold text-xl">{query}</h2>
+					<h2 className="break-words font-semibold text-xl leading-tight">
+						{query}
+					</h2>
 				</div>
-				<Braces aria-hidden="true" className="text-[#c14f2f]" size={22} />
+				<Braces
+					aria-hidden="true"
+					className="ml-4 shrink-0 text-[#c14f2f]"
+					size={22}
+				/>
 			</div>
 
 			<div className="px-4 py-4 text-lg leading-8">
@@ -32,7 +38,7 @@ export function AnswerPanel({
 						<span className="text-[#6f716d]">retrieval plan</span>
 						{retrievalQueries.map((retrievalQuery) => (
 							<span
-								className="border border-[#c9cac3] bg-[#f4f5ef] px-2 py-1 text-[#20211f]"
+								className="max-w-full break-words border border-[#c9cac3] bg-[#f4f5ef] px-2 py-1 text-[#20211f]"
 								key={retrievalQuery}
 							>
 								{retrievalQuery}
@@ -42,7 +48,7 @@ export function AnswerPanel({
 				) : null}
 
 				{aiAnswer?.status === "ready" ? (
-					<p>
+					<p className="max-w-[72ch]">
 						{aiAnswer.segments.map((segment) =>
 							segment.type === "text" ? (
 								<span key={`text:${segment.text}`}>{segment.text}</span>
@@ -110,12 +116,17 @@ function traceStepKey(step: AiTraceStep): string {
 
 function TraceStepCard({ index, step }: { index: number; step: AiTraceStep }) {
 	return (
-		<details className="border border-[#c9cac3] bg-[#fbfcf7] p-3">
-			<summary className="cursor-pointer font-medium text-[#20211f]">
-				{index + 1}. {step.stage} · {step.status}
-				{"durationMs" in step ? ` · ${step.durationMs}ms` : ""}
+		<details className="group border border-[#c9cac3] bg-[#fbfcf7]">
+			<summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 font-medium text-[#20211f] transition-colors hover:bg-[#f4f5ef] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px]">
+				<span className="inline-block text-[#3b6d65] transition-transform group-open:rotate-90">
+					▸
+				</span>
+				<span>
+					{index + 1}. {step.stage} · {step.status}
+					{"durationMs" in step ? ` · ${step.durationMs}ms` : ""}
+				</span>
 			</summary>
-			<div className="mt-3 grid gap-2 text-[#4a4c48]">
+			<div className="grid gap-2 border-[#d7d8d1] border-t p-3 text-[#4a4c48]">
 				{"model" in step ? <TraceRow label="model" value={step.model} /> : null}
 				{"input" in step ? (
 					<TraceJson label="input" value={step.input} />
@@ -142,7 +153,7 @@ function TraceJson({ label, value }: { label: string; value: unknown }) {
 	return (
 		<div>
 			<p className="font-medium text-[#20211f]">{label}</p>
-			<pre className="mt-1 max-h-56 whitespace-pre-wrap break-words border border-[#d7d8d1] bg-[#ffffff] p-2 text-xs leading-5">
+			<pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words border border-[#d7d8d1] bg-[#ffffff] p-2 font-mono text-[11px] leading-5">
 				{JSON.stringify(value, null, 2)}
 			</pre>
 		</div>
@@ -173,12 +184,12 @@ function CitationMarker({
 			{citedText ? <span>{citedText}</span> : null}
 			<a
 				aria-label={`Show citation: ${title}`}
-				className="mx-1 inline-flex h-6 min-w-6 items-center justify-center border border-[#3b6d65] bg-[#d8eee7] px-1 align-baseline font-semibold text-[#2f5c55] text-xs tabular-nums no-underline"
+				className="mx-1 inline-flex h-7 min-w-7 items-center justify-center border border-[#3b6d65] bg-[#d8eee7] px-1 align-baseline font-semibold text-[#2f5c55] text-xs tabular-nums no-underline transition-colors transition-transform hover:bg-[#c2e4dc] active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-2"
 				href={to}
 			>
 				{citationNumber}
 			</a>
-			<span className="pointer-events-none invisible absolute bottom-full left-0 z-20 mb-3 w-[min(520px,calc(100vw-48px))] border border-[#20211f] bg-[#ffffff] p-3 text-[#20211f] text-sm leading-6 opacity-0 shadow-[6px_6px_0_#20211f] transition group-hover:visible group-hover:opacity-100">
+			<span className="pointer-events-none invisible absolute bottom-full left-0 z-20 mb-3 max-h-[420px] w-[min(520px,calc(100vw-48px))] overflow-auto border border-[#20211f] bg-[#ffffff] p-3 text-[#20211f] text-sm leading-6 opacity-0 shadow-[6px_6px_0_#20211f] transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
 				<span className="mb-2 block font-semibold text-[#3b6d65]">{title}</span>
 				<span className="mb-2 block border-[#c14f2f] border-l-4 bg-[#fffaf2] p-2">
 					{quote}

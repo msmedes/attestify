@@ -26,7 +26,7 @@ export function CorpusBrowser({ view }: { view: CorpusView }) {
 
 			<div className="max-h-[560px] overflow-y-auto p-4">
 				{corpus.isPending ? (
-					<div className="text-[#6f716d]">Loading corpus view...</div>
+					<div className="text-[#6f716d] text-sm">Loading corpus view...</div>
 				) : null}
 
 				{corpus.isError ? (
@@ -94,7 +94,7 @@ function SourceSummary({
 	return (
 		<article className="border border-[#20211f] bg-[#f7f7f2] p-3">
 			<div className="mb-2 flex items-start justify-between gap-3">
-				<h3 className="font-semibold">{source.title}</h3>
+				<h3 className="font-semibold leading-tight">{source.title}</h3>
 				<span className="text-[#6f716d] text-xs tabular-nums">
 					{source.spans} spans
 				</span>
@@ -156,7 +156,7 @@ function SpanItem({
 					{sourceTitle ? <span>{sourceTitle}</span> : null}
 					<span>{span.locator}</span>
 				</div>
-				<p className="font-medium">{span.text}</p>
+				<p className="max-w-[90ch] font-medium leading-7">{span.text}</p>
 			</div>
 			<div className="grid gap-2 p-3">
 				{span.attestations.map((attestation) => (
@@ -192,11 +192,11 @@ function ClaimItem({
 					<span className="text-[#6f716d]">{sourceTitle}</span>
 				) : null}
 			</div>
-			<p className="text-sm">
+			<p className="text-sm leading-5">
 				<span className="font-semibold">{attestation.subject}</span>{" "}
 				{attestation.predicate} {attestation.value}
 			</p>
-			<blockquote className="mt-2 border-[#c14f2f] border-l-4 bg-[#fffaf2] p-2 text-sm">
+			<blockquote className="mt-2 border-[#c14f2f] border-l-4 bg-[#fffaf2] p-2 text-sm leading-6">
 				{attestation.anchorText}
 			</blockquote>
 		</article>
@@ -205,7 +205,7 @@ function ClaimItem({
 
 function ResultCount({ shown, total }: { shown: number; total: number }) {
 	return (
-		<div className="border border-[#c9cac3] bg-[#eeeeea] p-3 text-[#6f716d] text-sm">
+		<div className="border border-[#c9cac3] bg-[#eeeeea] p-3 text-[#6f716d] text-sm tabular-nums">
 			Showing {shown} of {total}.
 		</div>
 	);

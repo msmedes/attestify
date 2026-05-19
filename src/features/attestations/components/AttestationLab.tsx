@@ -59,7 +59,7 @@ export function AttestationLab() {
 							<div className="flex flex-wrap gap-2">
 								{sampleQueries.map((sampleQuery) => (
 									<button
-										className="h-9 border border-[#20211f] bg-[#ffffff] px-3 text-sm transition hover:bg-[#d8eee7] disabled:opacity-60"
+										className="min-h-10 border border-[#20211f] bg-[#ffffff] px-3 text-sm transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-2 disabled:opacity-60 disabled:active:scale-100"
 										disabled={search.isPending}
 										key={sampleQuery}
 										onClick={() => {
@@ -114,7 +114,7 @@ export function AttestationLab() {
 											className="mx-auto mb-5 text-[#c14f2f]"
 											size={42}
 										/>
-										<h2 className="font-semibold text-2xl">
+										<h2 className="font-semibold text-2xl leading-tight">
 											Run a query against the seed corpus.
 										</h2>
 									</div>

@@ -20,13 +20,15 @@ export function RawChunkPanel({ chunks }: RawChunkPanelProps) {
 				{chunks.map((chunk) => (
 					<article className="grid gap-2 px-4 py-4" key={chunk.spanId}>
 						<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-							<strong>{chunk.title}</strong>
-							<span className="text-[#6f716d]">{chunk.section}</span>
+							<strong className="leading-5">{chunk.title}</strong>
+							<span className="text-[#6f716d] leading-5">{chunk.section}</span>
 							<span className="text-[#3b6d65] tabular-nums">
 								score {chunk.score.toFixed(3)}
 							</span>
 						</div>
-						<p className="max-w-4xl text-[#383a36] leading-7">{chunk.text}</p>
+						<p className="max-w-[88ch] text-[#383a36] leading-7">
+							{chunk.text}
+						</p>
 					</article>
 				))}
 			</div>
