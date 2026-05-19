@@ -127,8 +127,7 @@ Recommended first-run flow:
 npm install
 npm run import:corpus
 npm run populate:embeddings
-npm run build
-PORT=3010 node .output/server/index.mjs
+npm run preview
 ```
 
 `npm run populate:embeddings` is the explicit upsert/indexing step. It embeds
