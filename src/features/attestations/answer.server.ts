@@ -1,6 +1,7 @@
 import { chat } from "@tanstack/ai";
 import { openaiText } from "@tanstack/ai-openai";
 import { z } from "zod";
+import { tokenize } from "./embed";
 import { loadServerEnv } from "./env.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
@@ -38,16 +39,17 @@ const retrievalPlanSchema = z.object({
 });
 
 const aiAnswerSchema = z.object({
-	segments: z
+	claims: z
 		.array(
 			z.object({
-				type: z.enum(["text", "quote"]),
-				text: z.string().optional(),
-				citationHandle: z.string().optional(),
+				text: z.string(),
+				citationHandles: z.array(z.string()).min(1),
 			}),
 		)
 		.min(1),
 });
+
+type ModelClaim = z.infer<typeof aiAnswerSchema>["claims"][number];
 
 export async function answerCorpus(query: string): Promise<SearchResponse> {
 	loadServerEnv();
@@ -122,7 +124,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 }
 
 async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
-	const model = process.env.OPENAI_MODEL || "gpt-4.1-nano";
+	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
 	const startedAt = performance.now();
 
 	try {
@@ -241,7 +243,7 @@ async function generateAiAnswer(
 		quote: citation.attestation.anchorText,
 		spanText: citation.span.text,
 	}));
-	const model = process.env.OPENAI_MODEL || "gpt-4.1-nano";
+	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
 	let modelAnswer: z.infer<typeof aiAnswerSchema>;
 	const startedAt = performance.now();
 
@@ -253,8 +255,8 @@ async function generateAiAnswer(
 				[
 					"You answer only from supplied evidence.",
 					"Do not use outside knowledge.",
-					"Every quote segment must use one of the provided citationHandle values.",
-					"For cited claims, return a text segment with the answer prose and citationHandle.",
+					"Every citation handle must be one of the provided citationHandle values.",
+					"Return cited claims, not quote blocks.",
 					"Do not copy the whole source quote into the answer unless the user asks for exact wording.",
 					"If evidence is weak, say so in text and still cite the closest evidence.",
 				].join(" "),
@@ -296,7 +298,15 @@ async function generateAiAnswer(
 		};
 	}
 
-	const modelSegments = selectModelSegments(modelAnswer.segments, citations);
+	const modelSegments = selectModelSegments(modelAnswer.claims, citations);
+	const evidencePreview = citations.map((citation, index) => ({
+		index: index + 1,
+		citationHandle: citation.citationHandle,
+		source: citation.source.title,
+		location: `${citation.span.section}, ${citation.span.locator}`,
+		quote: truncateForTrace(citation.attestation.anchorText),
+		spanText: truncateForTrace(citation.span.text),
+	}));
 	const traceStep: AiTraceStep = {
 		stage: "answer-synthesis",
 		status: "ready",
@@ -305,9 +315,10 @@ async function generateAiAnswer(
 		input: {
 			query,
 			citationHandles: citations.map((citation) => citation.citationHandle),
+			evidencePreview,
 		},
 		output: {
-			rawSegments: modelAnswer.segments,
+			rawClaims: modelAnswer.claims,
 			selectedSegments: modelSegments,
 		},
 	};
@@ -330,8 +341,14 @@ function logTraceStep(step: AiTraceStep) {
 	console.info("[attestation-rag:ai]", JSON.stringify(step));
 }
 
+function truncateForTrace(text: string): string {
+	const compact = text.replace(/\s+/g, " ").trim();
+
+	return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+}
+
 function selectModelSegments(
-	modelSegments: z.infer<typeof aiAnswerSchema>["segments"],
+	modelClaims: ModelClaim[],
 	citations: CitationUnit[],
 ): ModelSegment[] {
 	const fallback: ModelSegment[] = [
@@ -348,41 +365,105 @@ function selectModelSegments(
 	const validHandles = new Set(
 		citations.map((citation) => citation.citationHandle),
 	);
-	const segments = modelSegments.flatMap((segment): ModelSegment[] => {
-		if (segment.type === "text" && segment.text?.trim()) {
-			const textSegment: ModelSegment = { type: "text", text: segment.text };
+	const segments = modelClaims.flatMap((claim): ModelSegment[] => {
+		const text = claim.text.trim();
+		const citationHandles = selectClaimCitationHandles({
+			claimText: text,
+			modelCitationHandles: claim.citationHandles.filter((citationHandle) =>
+				validHandles.has(citationHandle),
+			),
+			citations,
+		});
 
-			if (segment.citationHandle && validHandles.has(segment.citationHandle)) {
-				return [
-					textSegment,
-					{
-						type: "citation",
-						citationHandle: segment.citationHandle,
-					},
-				];
-			}
-
-			return [textSegment];
+		if (!text || citationHandles.length === 0) {
+			return [];
 		}
 
-		if (
-			segment.type === "quote" &&
-			segment.citationHandle &&
-			validHandles.has(segment.citationHandle)
-		) {
-			return [
-				{
-					type: "citation",
-					text: segment.text?.trim() ? segment.text : undefined,
-					citationHandle: segment.citationHandle,
-				},
-			];
-		}
-
-		return [];
+		return [
+			{ type: "text", text },
+			...citationHandles.map((citationHandle) => ({
+				type: "citation" as const,
+				citationHandle,
+			})),
+			{ type: "text" as const, text: " " },
+		];
 	});
 
 	return segments.length > 0 ? segments : fallback;
+}
+
+function selectClaimCitationHandles({
+	citations,
+	claimText,
+	modelCitationHandles,
+}: {
+	citations: CitationUnit[];
+	claimText: string;
+	modelCitationHandles: string[];
+}): string[] {
+	const ranked = citations
+		.map((citation) => ({
+			citationHandle: citation.citationHandle,
+			modelSelected: modelCitationHandles.includes(citation.citationHandle),
+			score: claimCitationScore(claimText, citation),
+		}))
+		.sort((left, right) => {
+			if (right.score !== left.score) {
+				return right.score - left.score;
+			}
+
+			return Number(right.modelSelected) - Number(left.modelSelected);
+		});
+	const top = ranked.at(0);
+
+	if (!top || top.score === 0) {
+		return modelCitationHandles.slice(0, 2);
+	}
+
+	const selected = [top.citationHandle];
+
+	for (const handle of modelCitationHandles) {
+		if (selected.length >= 2) {
+			break;
+		}
+
+		if (!selected.includes(handle)) {
+			selected.push(handle);
+		}
+	}
+
+	return selected;
+}
+
+function claimCitationScore(claimText: string, citation: CitationUnit): number {
+	return tokenOverlap(
+		claimText,
+		[
+			citation.attestation.anchorText,
+			citation.span.text,
+			citation.span.section,
+			citation.source.title,
+		].join(" "),
+	);
+}
+
+function tokenOverlap(query: string, target: string): number {
+	const queryTokens = new Set(tokenize(query));
+	const targetTokens = new Set(tokenize(target));
+
+	if (queryTokens.size === 0 || targetTokens.size === 0) {
+		return 0;
+	}
+
+	let overlap = 0;
+
+	for (const token of queryTokens) {
+		if (targetTokens.has(token)) {
+			overlap += 1;
+		}
+	}
+
+	return overlap / queryTokens.size;
 }
 
 function hydrateQuoteSegments(

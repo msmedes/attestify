@@ -176,12 +176,19 @@ export type AnswerSynthesisTraceStep =
 			input: {
 				query: string;
 				citationHandles: string[];
+				evidencePreview: Array<{
+					index: number;
+					citationHandle: string;
+					source: string;
+					location: string;
+					quote: string;
+					spanText: string;
+				}>;
 			};
 			output: {
-				rawSegments: Array<{
-					type: "text" | "quote";
-					text?: string;
-					citationHandle?: string;
+				rawClaims: Array<{
+					text: string;
+					citationHandles: string[];
 				}>;
 				selectedSegments: Array<
 					| {

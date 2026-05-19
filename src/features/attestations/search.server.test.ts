@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { corpus, getCorpusStats, listSpans } from "./corpus";
+import { retrievalEvalCases } from "./retrieval-evals";
 import { searchCorpus, searchCorpusWithQueries } from "./search.server";
 
 describe("generated Gutenberg corpus", () => {
@@ -71,6 +72,27 @@ describe("searchCorpus", () => {
 		expect(
 			result.citations.some((unit) =>
 				/watch|waistcoat-pocket|rabbit-hole/i.test(unit.attestation.anchorText),
+			),
+		).toBe(true);
+	});
+
+	it.each(retrievalEvalCases)("passes retrieval eval: $id", async ({
+		expectedAnchorPattern,
+		expectedSourceId,
+		query,
+	}) => {
+		const result = await searchCorpus(query);
+
+		expect(
+			result.retrievalChunks.some(
+				(chunk) => chunk.sourceId === expectedSourceId,
+			),
+		).toBe(true);
+		expect(
+			result.citations.some(
+				(citation) =>
+					citation.source.sourceId === expectedSourceId &&
+					expectedAnchorPattern.test(citation.attestation.anchorText),
 			),
 		).toBe(true);
 	});

@@ -40,13 +40,13 @@ Put local secrets in `.env.local`; it is ignored by git.
 
 ```bash
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-nano
+OPENAI_MODEL=gpt-5.4-nano
 OPENAI_EMBEDDINGS=true
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMENSIONS=1024
 ```
 
-`OPENAI_MODEL` defaults to `gpt-4.1-nano` when omitted.
+`OPENAI_MODEL` defaults to `gpt-5.4-nano` when omitted.
 
 `OPENAI_EMBEDDINGS` defaults to enabled when `OPENAI_API_KEY` is present. Set
 `OPENAI_EMBEDDINGS=false` to use the local deterministic hash embedding fallback
