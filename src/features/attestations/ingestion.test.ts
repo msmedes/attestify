@@ -14,7 +14,7 @@ describe("ingestion contract", () => {
 		const snapshot = createSourceSnapshot({
 			connectorId: " fixture-gutenberg ",
 			externalSourceId: " 1524 ",
-			kind: "play",
+			kind: "notion-page",
 			title: " Hamlet ",
 			content: " To be, or not to be. ",
 			snapshotVersion: "  gutenberg-1524-static ",
@@ -27,10 +27,13 @@ describe("ingestion contract", () => {
 
 		expect(snapshot.connectorId).toBe("fixture-gutenberg");
 		expect(snapshot.externalSourceId).toBe("1524");
-		expect(snapshot.sourceId).toBe("src:fixture-gutenberg:1524");
+		expect(snapshot.kind).toBe("notion-page");
+		expect(snapshot.sourceId).toMatch(
+			/^src:fixture-gutenberg-[a-f0-9]{12}:1524-[a-f0-9]{12}$/,
+		);
 		expect(snapshot.snapshotVersion).toBe("gutenberg-1524-static");
-		expect(snapshot.snapshotId).toContain(
-			"snapshot:src-fixture-gutenberg-1524",
+		expect(snapshot.snapshotId).toMatch(
+			/^snapshot:src-fixture-gutenberg-[a-f0-9-]+:gutenberg-1524-static-[a-f0-9]{12}:[a-f0-9]+-[a-f0-9]{12}$/,
 		);
 		expect(snapshot.contentHash).toHaveLength(64);
 		expect(snapshot.metadata).toEqual({
@@ -38,6 +41,27 @@ describe("ingestion contract", () => {
 			authorName: "William Shakespeare",
 			labels: ["drama"],
 		});
+	});
+
+	it("keeps distinct external identities distinct after normalization", () => {
+		const first = createSourceSnapshot({
+			connectorId: "connector",
+			externalSourceId: "doc/a",
+			kind: "document",
+			title: "Doc A",
+			content: "Same content.",
+		});
+		const second = createSourceSnapshot({
+			connectorId: "connector",
+			externalSourceId: "doc_a",
+			kind: "document",
+			title: "Doc A",
+			content: "Same content.",
+		});
+
+		expect(first.sourceId).not.toBe(second.sourceId);
+		expect(first.externalSourceId).toBe("doc/a");
+		expect(second.externalSourceId).toBe("doc_a");
 	});
 
 	it("rejects missing external identity and empty source content", () => {
@@ -132,6 +156,87 @@ describe("ingestion contract", () => {
 			verifiedAgainstSource: true,
 			method: "anchor-substring",
 		});
+	});
+
+	it("rejects candidates whose extraction run belongs to another snapshot", () => {
+		const snapshot = createFixtureSnapshot();
+		const otherSnapshot = createSourceSnapshot({
+			connectorId: "fixture-gutenberg",
+			externalSourceId: "1533",
+			kind: "play",
+			title: "Macbeth",
+			content: "Thunder and lightning.",
+			snapshotVersion: "gutenberg-1533-static",
+		});
+		const span = createSourceSpanCandidate({
+			snapshot,
+			spanKey: "act-1-scene-1-lines-1-2",
+			section: "Act 1 Scene 1",
+			locator: "Act 1, Scene 1, lines 1-2",
+			text: "Barnardo asks who is there.",
+		});
+		const extractionRun = createExtractionRun({
+			snapshot: otherSnapshot,
+			extractorId: "fixture-script",
+			extractorVersion: "1.0.0",
+			startedAt: "2026-05-19T00:00:00.000Z",
+		});
+
+		expect(() =>
+			createAttestationCandidate({
+				extractionRun,
+				span,
+				type: "utterance",
+				subject: "Barnardo",
+				predicate: "asks",
+				value: "who is there",
+				context: "opening watch",
+				anchorText: "who is there",
+			}),
+		).toThrow(
+			new IngestionContractError(
+				"Extraction run snapshotId does not match source span candidate.",
+			),
+		);
+	});
+
+	it("rejects verification when candidate provenance names another snapshot", () => {
+		const snapshot = createFixtureSnapshot();
+		const span = createSourceSpanCandidate({
+			snapshot,
+			spanKey: "act-1-scene-1-lines-1-2",
+			section: "Act 1 Scene 1",
+			locator: "Act 1, Scene 1, lines 1-2",
+			text: "Barnardo asks who is there.",
+		});
+		const extractionRun = createExtractionRun({
+			snapshot,
+			extractorId: "fixture-script",
+			extractorVersion: "1.0.0",
+			startedAt: "2026-05-19T00:00:00.000Z",
+		});
+		const candidate = createAttestationCandidate({
+			extractionRun,
+			span,
+			type: "utterance",
+			subject: "Barnardo",
+			predicate: "asks",
+			value: "who is there",
+			context: "opening watch",
+			anchorText: "who is there",
+		});
+
+		expect(() =>
+			verifyAttestationCandidate({
+				candidate: { ...candidate, snapshotId: "snapshot:other" },
+				span,
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			}),
+		).toThrow(
+			new IngestionContractError(
+				"Attestation candidate snapshotId does not match source span candidate.",
+			),
+		);
 	});
 
 	it("rejects generated candidates whose anchor is not present in the span", () => {

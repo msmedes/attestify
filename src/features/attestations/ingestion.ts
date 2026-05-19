@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import type { AttestationType, SourceKind } from "./types";
+import type { AttestationType } from "./types";
+
+export type IngestionSourceKind = string;
 
 export type ConnectorMetadata = {
 	workspaceId?: string;
@@ -13,7 +15,7 @@ export type ConnectorMetadata = {
 export type SourceDocumentInput = {
 	connectorId: string;
 	externalSourceId: string;
-	kind: SourceKind;
+	kind: IngestionSourceKind;
 	title: string;
 	content: string;
 	attribution?: string;
@@ -28,7 +30,7 @@ export type SourceSnapshot = {
 	snapshotId: string;
 	connectorId: string;
 	externalSourceId: string;
-	kind: SourceKind;
+	kind: IngestionSourceKind;
 	title: string;
 	content: string;
 	contentHash: string;
@@ -67,6 +69,7 @@ export type ExtractionRun = {
 export type AttestationCandidate = {
 	candidateId: string;
 	extractionRunId: string;
+	snapshotId: string;
 	spanId: string;
 	type: AttestationType;
 	subject: string;
@@ -101,18 +104,19 @@ export function createSourceSnapshot(
 		"externalSourceId",
 	);
 	const title = requireNonEmpty(input.title, "title");
+	const kind = requireNonEmpty(input.kind, "kind");
 	const content = requireNonEmpty(input.content, "content");
 	const contentHash = sha256(content);
-	const sourceId = stableId(["src", connectorId, externalSourceId]);
+	const sourceId = stableId("src", [connectorId, externalSourceId]);
 	const snapshotVersion =
 		normalizeOptional(input.snapshotVersion) ?? `sha256:${contentHash}`;
 
 	return {
 		sourceId,
-		snapshotId: stableId(["snapshot", sourceId, snapshotVersion, contentHash]),
+		snapshotId: stableId("snapshot", [sourceId, snapshotVersion, contentHash]),
 		connectorId,
 		externalSourceId,
-		kind: input.kind,
+		kind,
 		title,
 		content,
 		contentHash,
@@ -137,7 +141,7 @@ export function createSourceSpanCandidate({
 	const normalizedText = requireNonEmpty(text, "text");
 
 	return {
-		spanId: stableId(["span", snapshot.snapshotId, normalizedSpanKey]),
+		spanId: stableId("span", [snapshot.snapshotId, normalizedSpanKey]),
 		snapshotId: snapshot.snapshotId,
 		sourceId: snapshot.sourceId,
 		section: normalizedSection,
@@ -165,8 +169,7 @@ export function createExtractionRun({
 	const normalizedStartedAt = requireNonEmpty(startedAt, "startedAt");
 
 	return {
-		extractionRunId: stableId([
-			"extraction",
+		extractionRunId: stableId("extraction", [
 			snapshot.snapshotId,
 			normalizedExtractorId,
 			normalizedExtractorVersion,
@@ -203,9 +206,14 @@ export function createAttestationCandidate({
 	const normalizedValue = requireNonEmpty(value, "value");
 	const normalizedAnchorText = requireNonEmpty(anchorText, "anchorText");
 
+	if (extractionRun.snapshotId !== span.snapshotId) {
+		throw new IngestionContractError(
+			"Extraction run snapshotId does not match source span candidate.",
+		);
+	}
+
 	return {
-		candidateId: stableId([
-			"candidate",
+		candidateId: stableId("candidate", [
 			extractionRun.extractionRunId,
 			span.spanId,
 			type,
@@ -215,6 +223,7 @@ export function createAttestationCandidate({
 			normalizedAnchorText,
 		]),
 		extractionRunId: extractionRun.extractionRunId,
+		snapshotId: extractionRun.snapshotId,
 		spanId: span.spanId,
 		type,
 		subject: normalizedSubject,
@@ -242,6 +251,12 @@ export function verifyAttestationCandidate({
 		);
 	}
 
+	if (candidate.snapshotId !== span.snapshotId) {
+		throw new IngestionContractError(
+			"Attestation candidate snapshotId does not match source span candidate.",
+		);
+	}
+
 	if (!span.text.includes(candidate.anchorText)) {
 		throw new IngestionContractError(
 			"Attestation candidate anchorText is not present in the source span.",
@@ -250,7 +265,7 @@ export function verifyAttestationCandidate({
 
 	return {
 		...candidate,
-		attestationId: stableId(["attestation", candidate.candidateId]),
+		attestationId: stableId("attestation", [candidate.candidateId]),
 		verifiedAt: normalizedVerifiedAt,
 		support: {
 			verifiedAgainstSource: true,
@@ -305,18 +320,19 @@ function optionalMetadata(metadata: ConnectorMetadata | undefined): {
 	return Object.keys(normalized).length > 0 ? { metadata: normalized } : {};
 }
 
-function stableId(parts: string[]): string {
-	return parts.map((part) => slugPart(part)).join(":");
+function stableId(namespace: string, parts: string[]): string {
+	return [namespace, ...parts.map((part) => stableIdPart(part))].join(":");
 }
 
-function slugPart(value: string): string {
-	return (
+function stableIdPart(value: string): string {
+	const slug =
 		value
 			.toLowerCase()
 			.replace(/[^a-z0-9]+/g, "-")
 			.replace(/^-+|-+$/g, "")
-			.slice(0, 80) || "unknown"
-	);
+			.slice(0, 48) || "opaque";
+
+	return `${slug}-${sha256(value).slice(0, 12)}`;
 }
 
 function sha256(value: string): string {
