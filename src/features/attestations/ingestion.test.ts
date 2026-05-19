@@ -44,7 +44,7 @@ describe("ingestion contract", () => {
 	});
 
 	it("preserves source text whitespace in snapshots, spans, and anchors", () => {
-		const content = "Line 1\n\n  Line 2";
+		const content = "Line 1\n\nSpeaker:\n  Line 2";
 		const snapshot = createSourceSnapshot({
 			connectorId: "fixture",
 			externalSourceId: "whitespace-doc",
@@ -161,6 +161,24 @@ describe("ingestion contract", () => {
 			locator: "Act 1, Scene 1, lines 1-2",
 			text: "Barnardo asks who is there.",
 		});
+	});
+
+	it("rejects span candidates detached from the source snapshot text", () => {
+		const snapshot = createFixtureSnapshot();
+
+		expect(() =>
+			createSourceSpanCandidate({
+				snapshot,
+				spanKey: "macbeth-line",
+				section: "Act 1",
+				locator: "Act 1, Scene 1",
+				text: "Thunder and lightning.",
+			}),
+		).toThrow(
+			new IngestionContractError(
+				"Source span candidate text is not present in the source snapshot.",
+			),
+		);
 	});
 
 	it("keeps attestation candidates distinct from verified attestations", () => {

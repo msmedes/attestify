@@ -140,6 +140,12 @@ export function createSourceSpanCandidate({
 	const normalizedSpanKey = requireNonEmpty(spanKey, "spanKey");
 	const normalizedText = requireSourceText(text, "text");
 
+	if (!snapshot.content.includes(normalizedText)) {
+		throw new IngestionContractError(
+			"Source span candidate text is not present in the source snapshot.",
+		);
+	}
+
 	return {
 		spanId: stableId("span", [snapshot.snapshotId, normalizedSpanKey]),
 		snapshotId: snapshot.snapshotId,
