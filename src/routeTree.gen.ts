@@ -14,6 +14,7 @@ import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
 import { Route as ApiCorpusRouteImport } from './routes/api/corpus'
 import { Route as ApiAnswerRouteImport } from './routes/api/answer'
+import { Route as ApiHistoryRunIdRouteImport } from './routes/api/history.$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,28 +41,36 @@ const ApiAnswerRoute = ApiAnswerRouteImport.update({
   path: '/api/answer',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHistoryRunIdRoute = ApiHistoryRunIdRouteImport.update({
+  id: '/$runId',
+  path: '/$runId',
+  getParentRoute: () => ApiHistoryRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/answer': typeof ApiAnswerRoute
   '/api/corpus': typeof ApiCorpusRoute
-  '/api/history': typeof ApiHistoryRoute
+  '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/answer': typeof ApiAnswerRoute
   '/api/corpus': typeof ApiCorpusRoute
-  '/api/history': typeof ApiHistoryRoute
+  '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/answer': typeof ApiAnswerRoute
   '/api/corpus': typeof ApiCorpusRoute
-  '/api/history': typeof ApiHistoryRoute
+  '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -71,8 +80,15 @@ export interface FileRouteTypes {
     | '/api/corpus'
     | '/api/history'
     | '/api/search'
+    | '/api/history/$runId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/answer' | '/api/corpus' | '/api/history' | '/api/search'
+  to:
+    | '/'
+    | '/api/answer'
+    | '/api/corpus'
+    | '/api/history'
+    | '/api/search'
+    | '/api/history/$runId'
   id:
     | '__root__'
     | '/'
@@ -80,13 +96,14 @@ export interface FileRouteTypes {
     | '/api/corpus'
     | '/api/history'
     | '/api/search'
+    | '/api/history/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiAnswerRoute: typeof ApiAnswerRoute
   ApiCorpusRoute: typeof ApiCorpusRoute
-  ApiHistoryRoute: typeof ApiHistoryRoute
+  ApiHistoryRoute: typeof ApiHistoryRouteWithChildren
   ApiSearchRoute: typeof ApiSearchRoute
 }
 
@@ -127,14 +144,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAnswerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/history/$runId': {
+      id: '/api/history/$runId'
+      path: '/$runId'
+      fullPath: '/api/history/$runId'
+      preLoaderRoute: typeof ApiHistoryRunIdRouteImport
+      parentRoute: typeof ApiHistoryRoute
+    }
   }
 }
+
+interface ApiHistoryRouteChildren {
+  ApiHistoryRunIdRoute: typeof ApiHistoryRunIdRoute
+}
+
+const ApiHistoryRouteChildren: ApiHistoryRouteChildren = {
+  ApiHistoryRunIdRoute: ApiHistoryRunIdRoute,
+}
+
+const ApiHistoryRouteWithChildren = ApiHistoryRoute._addFileChildren(
+  ApiHistoryRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiAnswerRoute: ApiAnswerRoute,
   ApiCorpusRoute: ApiCorpusRoute,
-  ApiHistoryRoute: ApiHistoryRoute,
+  ApiHistoryRoute: ApiHistoryRouteWithChildren,
   ApiSearchRoute: ApiSearchRoute,
 }
 export const routeTree = rootRouteImport

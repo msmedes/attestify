@@ -1,4 +1,9 @@
-import type { QueryRunSummary, SearchRequest, SearchResponse } from "./types";
+import type {
+	QueryRunDetail,
+	QueryRunSummary,
+	SearchRequest,
+	SearchResponse,
+} from "./types";
 
 export async function answerWithAttestations(
 	request: SearchRequest,
@@ -23,6 +28,19 @@ export async function listQueryHistory(): Promise<QueryRunSummary[]> {
 	const body = (await response.json()) as { runs: QueryRunSummary[] };
 
 	return body.runs;
+}
+
+export async function getQueryHistoryRun(id: string): Promise<QueryRunDetail> {
+	const response = await fetch(`/api/history/${encodeURIComponent(id)}`);
+
+	if (!response.ok) {
+		const message = await response.text();
+		throw new Error(message || `History run failed with ${response.status}`);
+	}
+
+	const body = (await response.json()) as { run: QueryRunDetail };
+
+	return body.run;
 }
 
 async function postSearchRequest(

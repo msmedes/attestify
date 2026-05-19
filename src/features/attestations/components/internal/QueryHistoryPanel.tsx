@@ -4,20 +4,22 @@ import type { QueryRunSummary } from "../../types";
 type QueryHistoryPanelProps = {
 	runs: QueryRunSummary[];
 	isLoading: boolean;
-	onQuerySelected: (query: string) => void;
+	activeRunId: string | null;
+	onRunSelected: (run: QueryRunSummary) => void;
 };
 
 export function QueryHistoryPanel({
+	activeRunId,
 	runs,
 	isLoading,
-	onQuerySelected,
+	onRunSelected,
 }: QueryHistoryPanelProps) {
 	return (
 		<section className="border border-[#20211f] bg-[#ffffff]">
 			<div className="border-[#20211f] border-b p-4">
 				<div className="flex items-center gap-2 text-[#3b6d65] text-sm">
 					<Clock3 aria-hidden="true" size={16} />
-					<span>SQLite query history</span>
+					<span>History</span>
 				</div>
 			</div>
 
@@ -34,9 +36,11 @@ export function QueryHistoryPanel({
 
 				{runs.map((run) => (
 					<button
-						className="block min-h-24 w-full border-[#d6d8cf] border-b p-4 text-left transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px]"
+						className={`block min-h-24 w-full border-[#d6d8cf] border-b p-4 text-left transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px] ${
+							activeRunId === run.id ? "bg-[#d8eee7]" : ""
+						}`}
 						key={run.id}
-						onClick={() => onQuerySelected(run.query)}
+						onClick={() => onRunSelected(run)}
 						type="button"
 					>
 						<div className="mb-2 font-medium text-sm leading-5">

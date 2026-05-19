@@ -3,10 +3,15 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import Database from "better-sqlite3";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { queryRuns } from "./history.schema";
-import type { AiAnswerSegment, QueryRunSummary, SearchResponse } from "./types";
+import type {
+	AiAnswerSegment,
+	QueryRunDetail,
+	QueryRunSummary,
+	SearchResponse,
+} from "./types";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATABASE_PATH = path.join(DATA_DIR, "attestify.sqlite");
@@ -67,21 +72,39 @@ export function listQueryRunSummaries(limit = 12): QueryRunSummary[] {
 		.limit(limit)
 		.all()
 		.map((run) => {
-			const citations = JSON.parse(run.citationsJson) as unknown[];
-			const retrievalQueries = JSON.parse(
-				run.retrievalQueriesJson,
-			) as unknown[];
-
-			return {
-				id: run.id,
-				createdAt: run.createdAt.toISOString(),
-				query: run.query,
-				answerStatus: run.answerStatus,
-				answerText: run.answerText,
-				citationCount: citations.length,
-				retrievalQueryCount: retrievalQueries.length,
-			};
+			return summarizeRun(run);
 		});
+}
+
+export function getQueryRunDetail(id: string): QueryRunDetail | null {
+	const db = getDb();
+	const run = db.select().from(queryRuns).where(eq(queryRuns.id, id)).get();
+
+	if (!run) {
+		return null;
+	}
+
+	return {
+		...summarizeRun(run),
+		response: JSON.parse(run.responseJson) as SearchResponse,
+	};
+}
+
+type QueryRunRow = typeof queryRuns.$inferSelect;
+
+function summarizeRun(run: QueryRunRow): QueryRunSummary {
+	const citations = JSON.parse(run.citationsJson) as unknown[];
+	const retrievalQueries = JSON.parse(run.retrievalQueriesJson) as unknown[];
+
+	return {
+		id: run.id,
+		createdAt: run.createdAt.toISOString(),
+		query: run.query,
+		answerStatus: run.answerStatus,
+		answerText: run.answerText,
+		citationCount: citations.length,
+		retrievalQueryCount: retrievalQueries.length,
+	};
 }
 
 function answerText(segments: AiAnswerSegment[]): string {

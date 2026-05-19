@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { answerWithAttestations, listQueryHistory } from "./api";
+import {
+	answerWithAttestations,
+	getQueryHistoryRun,
+	listQueryHistory,
+} from "./api";
 
 export function useSearchAttestations() {
 	const queryClient = useQueryClient();
@@ -16,5 +20,13 @@ export function useQueryHistory() {
 	return useQuery({
 		queryKey: ["query-history"],
 		queryFn: listQueryHistory,
+	});
+}
+
+export function useQueryHistoryRun(id: string | null) {
+	return useQuery({
+		queryKey: ["query-history-run", id],
+		queryFn: () => getQueryHistoryRun(id ?? ""),
+		enabled: Boolean(id),
 	});
 }

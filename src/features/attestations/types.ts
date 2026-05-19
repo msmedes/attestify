@@ -281,6 +281,10 @@ export type QueryRunSummary = {
 	retrievalQueryCount: number;
 };
 
+export type QueryRunDetail = QueryRunSummary & {
+	response: SearchResponse;
+};
+
 export type AiAnswer =
 	| {
 			status: "ready";

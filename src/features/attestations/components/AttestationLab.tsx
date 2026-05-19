@@ -1,6 +1,10 @@
 import { Database, Search } from "lucide-react";
 import { useState } from "react";
-import { useQueryHistory, useSearchAttestations } from "../queries";
+import {
+	useQueryHistory,
+	useQueryHistoryRun,
+	useSearchAttestations,
+} from "../queries";
 import { AnswerPanel } from "./internal/AnswerPanel";
 import { CorpusBrowser, type CorpusView } from "./internal/CorpusBrowser";
 import { CorpusSidebar } from "./internal/CorpusSidebar";
@@ -20,9 +24,15 @@ const sampleQueries = [
 export function AttestationLab() {
 	const [query, setQuery] = useState(sampleQueries[0]);
 	const [corpusView, setCorpusView] = useState<CorpusView | null>(null);
+	const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<
+		string | null
+	>(null);
 	const search = useSearchAttestations();
 	const history = useQueryHistory();
-	const result = search.data ?? null;
+	const selectedHistoryRun = useQueryHistoryRun(selectedHistoryRunId);
+	const result = selectedHistoryRunId
+		? (selectedHistoryRun.data?.response ?? null)
+		: (search.data ?? null);
 
 	function submitQuery(nextQuery: string) {
 		const trimmedQuery = nextQuery.trim();
@@ -31,6 +41,7 @@ export function AttestationLab() {
 			return;
 		}
 
+		setSelectedHistoryRunId(null);
 		search.mutate({ query: trimmedQuery });
 	}
 
@@ -92,6 +103,18 @@ export function AttestationLab() {
 								</div>
 							) : null}
 
+							{selectedHistoryRun.isError ? (
+								<div className="border border-[#9f2f2f] bg-[#fff7f4] p-4 text-[#7a2424]">
+									{selectedHistoryRun.error.message}
+								</div>
+							) : null}
+
+							{selectedHistoryRunId && selectedHistoryRun.isPending ? (
+								<div className="border border-[#20211f] bg-[#ffffff] p-4 text-[#686a64]">
+									Loading saved run...
+								</div>
+							) : null}
+
 							{result ? (
 								<>
 									{corpusView ? <CorpusBrowser view={corpusView} /> : null}
@@ -121,10 +144,11 @@ export function AttestationLab() {
 								</div>
 							)}
 							<QueryHistoryPanel
+								activeRunId={selectedHistoryRunId}
 								isLoading={history.isLoading}
-								onQuerySelected={(selectedQuery) => {
-									setQuery(selectedQuery);
-									submitQuery(selectedQuery);
+								onRunSelected={(run) => {
+									setQuery(run.query);
+									setSelectedHistoryRunId(run.id);
 								}}
 								runs={history.data ?? []}
 							/>

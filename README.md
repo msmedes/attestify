@@ -77,7 +77,7 @@ The AI answer route is intentionally split into traceable stages:
 The UI exposes each stage in the AI trace so a bad answer can be diagnosed as a
 planning, retrieval, reranking, or synthesis failure.
 
-## Query History
+## History
 
 Completed answer runs are stored in local SQLite at `.data/attestify.sqlite`.
 The schema lives in `src/features/attestations/history.schema.ts` and is wired
@@ -90,9 +90,11 @@ To regenerate Drizzle migrations after changing the history schema:
 npm run db:generate
 ```
 
-The app also exposes `GET /api/history` and renders recent runs in the main UI.
-Each stored run includes the query, answer text, retrieval queries, retrieved
-chunks, citations, AI trace, and full response JSON.
+The app exposes `GET /api/history` for recent run summaries and
+`GET /api/history/:runId` for a stored run. Selecting a history item in the UI
+loads the saved response into the main pane instead of rerunning the query or
+spending model credits. Each stored run includes the query, answer text,
+retrieval queries, retrieved chunks, citations, AI trace, and full response JSON.
 
 ## Populate Embeddings
 
