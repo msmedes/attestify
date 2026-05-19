@@ -2,7 +2,7 @@
 
 # Attestify
 
-A TanStack Start prototype for source-faithful citations over a real imported corpus. It imports public-domain Project Gutenberg texts, segments raw text into citeable spans, generates sentence/passage attestations with exact anchors, indexes the spans in Vectra, and returns citation units rather than arbitrary RAG chunks.
+A TanStack Start prototype for source-faithful citations over a real imported corpus. It imports public-domain Project Gutenberg texts, segments raw text into citeable spans, generates sentence/passage attestations with exact anchors, indexes the spans in Vectra, reranks broad evidence candidates, and returns citation units rather than arbitrary RAG chunks.
 
 ## License
 
@@ -64,6 +64,36 @@ OPENAI_EMBEDDING_DIMENSIONS=1024
 `OPENAI_EMBEDDINGS=false` to use the local deterministic hash embedding fallback
 instead of calling OpenAI.
 
+## Answer Pipeline
+
+The AI answer route is intentionally split into traceable stages:
+
+1. Expand the user query into literal retrieval queries.
+2. Retrieve a broad candidate pool from Vectra plus lexical scoring.
+3. Rerank candidate citation units against the original question.
+4. Ask the answer model to emit cited claims using only the reranked evidence.
+5. Render numbered citation markers that open the linked source quote.
+
+The UI exposes each stage in the AI trace so a bad answer can be diagnosed as a
+planning, retrieval, reranking, or synthesis failure.
+
+## Query History
+
+Completed answer runs are stored in local SQLite at `.data/attestify.sqlite`.
+The schema lives in `src/features/attestations/history.schema.ts` and is wired
+through Drizzle. The app creates the table automatically on first use, and the
+generated migration is checked in under `drizzle/`.
+
+To regenerate Drizzle migrations after changing the history schema:
+
+```bash
+npm run db:generate
+```
+
+The app also exposes `GET /api/history` and renders recent runs in the main UI.
+Each stored run includes the query, answer text, retrieval queries, retrieved
+chunks, citations, AI trace, and full response JSON.
+
 ## Populate Embeddings
 
 The first search against a fresh checkout builds the Vectra index. With OpenAI
@@ -116,5 +146,16 @@ On this machine, the Vite dev server currently hits the local file-descriptor li
 npm run check
 npm run test
 ```
+
+Generated-answer evals use `vitest-evals` and call the configured OpenAI model:
+
+```bash
+npm run evals
+```
+
+The eval suite is separate from `npm test` so normal deterministic tests do not
+spend model credits. Current evals assert that generated answers are ready,
+include rerank traces, and cite expected source anchors for representative
+questions.
 
 The VectorDB files are generated under `.data/` and are intentionally ignored.

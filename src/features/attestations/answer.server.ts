@@ -3,6 +3,7 @@ import { openaiText } from "@tanstack/ai-openai";
 import { z } from "zod";
 import { tokenize } from "./embed";
 import { loadServerEnv } from "./env.server";
+import { recordQueryRun } from "./history.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
 	AiAnswer,
@@ -34,8 +35,26 @@ type GeneratedAnswer = {
 	traceStep: AiTraceStep;
 };
 
+type RerankedCitations = {
+	citations: CitationUnit[];
+	traceStep: AiTraceStep;
+};
+
 const retrievalPlanSchema = z.object({
 	queries: z.array(z.string()).min(1).max(5),
+});
+
+const rerankSchema = z.object({
+	selected: z
+		.array(
+			z.object({
+				citationHandle: z.string(),
+				relevance: z.number().min(0).max(1),
+				rationale: z.string(),
+			}),
+		)
+		.min(1)
+		.max(8),
 });
 
 const aiAnswerSchema = z.object({
@@ -66,7 +85,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 			error: "OPENAI_API_KEY is not configured.",
 		});
 
-		return {
+		const response = {
 			...search,
 			aiTrace: { steps: traceSteps },
 			aiAnswer: {
@@ -74,6 +93,9 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 				message: "OPENAI_API_KEY is not configured for the AI answer route.",
 			},
 		};
+		recordQueryRun(response);
+
+		return response;
 	}
 
 	const retrievalPlan = await generateRetrievalPlan(query);
@@ -81,6 +103,9 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 	const search = await searchCorpusWithQueries({
 		query,
 		retrievalQueries: retrievalPlan.queries,
+		chunkLimit: 40,
+		citationLimit: 30,
+		citationScoreFloor: 0,
 	});
 	traceSteps.push({
 		stage: "retrieval",
@@ -103,7 +128,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 	});
 
 	if (retrievalPlan.error) {
-		return {
+		const response = {
 			...search,
 			aiTrace: { steps: traceSteps },
 			aiAnswer: {
@@ -111,16 +136,25 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 				message: retrievalPlan.error,
 			},
 		};
+		recordQueryRun(response);
+
+		return response;
 	}
 
-	const generatedAnswer = await generateAiAnswer(query, search.citations);
+	const reranked = await rerankCitations(query, search.citations);
+	traceSteps.push(reranked.traceStep);
+	const generatedAnswer = await generateAiAnswer(query, reranked.citations);
 	traceSteps.push(generatedAnswer.traceStep);
 
-	return {
+	const response = {
 		...search,
+		citations: reranked.citations,
 		aiTrace: { steps: traceSteps },
 		aiAnswer: generatedAnswer.answer,
 	};
+	recordQueryRun(response);
+
+	return response;
 }
 
 async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
@@ -333,6 +367,231 @@ async function generateAiAnswer(
 	};
 }
 
+async function rerankCitations(
+	query: string,
+	citations: CitationUnit[],
+): Promise<RerankedCitations> {
+	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+	const startedAt = performance.now();
+	const citationHandles = citations.map((citation) => citation.citationHandle);
+
+	if (citations.length <= 6) {
+		const traceStep: AiTraceStep = {
+			stage: "rerank",
+			status: "fallback",
+			model,
+			durationMs: elapsedMs(startedAt),
+			input: {
+				query,
+				citationHandles,
+			},
+			output: {
+				reason: "Candidate set was already small enough for answer synthesis.",
+				citationHandles,
+			},
+		};
+		logTraceStep(traceStep);
+
+		return {
+			citations,
+			traceStep,
+		};
+	}
+
+	const evidence = citations.map((citation, index) => ({
+		index: index + 1,
+		citationHandle: citation.citationHandle,
+		source: citation.source.title,
+		location: `${citation.span.section}, ${citation.span.locator}`,
+		quote: citation.attestation.anchorText,
+		spanText: truncateForTrace(citation.span.text),
+		retrievalScore: citation.score,
+	}));
+
+	try {
+		const result = await chat({
+			adapter: openaiText(model),
+			outputSchema: rerankSchema,
+			systemPrompts: [
+				[
+					"You rerank citation evidence for an answer generator.",
+					"Select only citation handles that directly help answer the user query.",
+					"Prefer narrow quotes over broad nearby context.",
+					"Treat location or event wording like 'at the rabbit-hole' as a scope boundary, not permission to include all later events.",
+					"Prefer evidence closest to the event named in the query over downstream consequences.",
+					"Do not answer the query.",
+					"Return at most 6 selected citation handles, ordered from strongest to weakest.",
+				].join(" "),
+			],
+			messages: [
+				{
+					role: "user",
+					content: JSON.stringify({
+						query,
+						evidence,
+					}),
+				},
+			],
+		});
+		const selected = normalizeRerankSelection({
+			citations,
+			query,
+			selected: result.selected,
+		});
+		const traceStep: AiTraceStep = {
+			stage: "rerank",
+			status: "ready",
+			model,
+			durationMs: elapsedMs(startedAt),
+			input: {
+				query,
+				citationHandles,
+			},
+			output: {
+				selected,
+			},
+		};
+		logTraceStep(traceStep);
+
+		return {
+			citations: citationsByHandles(
+				citations,
+				selected.map((item) => item.citationHandle),
+			),
+			traceStep,
+		};
+	} catch (error) {
+		const fallback = citations.slice(0, 6);
+		const traceStep: AiTraceStep = {
+			stage: "rerank",
+			status: "fallback",
+			model,
+			durationMs: elapsedMs(startedAt),
+			input: {
+				query,
+				citationHandles,
+			},
+			output: {
+				reason:
+					error instanceof Error
+						? `AI rerank failed: ${error.message}`
+						: "AI rerank failed.",
+				citationHandles: fallback.map((citation) => citation.citationHandle),
+			},
+		};
+		logTraceStep(traceStep);
+
+		return {
+			citations: fallback,
+			traceStep,
+		};
+	}
+}
+
+function normalizeRerankSelection({
+	citations,
+	query,
+	selected,
+}: {
+	citations: CitationUnit[];
+	query: string;
+	selected: z.infer<typeof rerankSchema>["selected"];
+}): Array<{
+	citationHandle: string;
+	relevance: number;
+	rationale: string;
+}> {
+	const validHandles = new Set(
+		citations.map((citation) => citation.citationHandle),
+	);
+	const seen = new Set<string>();
+	const normalized = [];
+	const directMatches = citations
+		.map((citation) => ({
+			citation,
+			score: directQueryCitationScore(query, citation),
+		}))
+		.filter((item) => item.score > 0)
+		.sort((left, right) => right.score - left.score)
+		.slice(0, 2);
+
+	for (const { citation, score } of directMatches) {
+		seen.add(citation.citationHandle);
+		normalized.push({
+			citationHandle: citation.citationHandle,
+			relevance: roundScore(Math.max(score, citation.score)),
+			rationale: "Direct lexical match to the original user query.",
+		});
+	}
+
+	for (const item of selected) {
+		if (
+			!validHandles.has(item.citationHandle) ||
+			seen.has(item.citationHandle)
+		) {
+			continue;
+		}
+
+		seen.add(item.citationHandle);
+		normalized.push({
+			citationHandle: item.citationHandle,
+			relevance: roundScore(item.relevance),
+			rationale: item.rationale.trim().slice(0, 240),
+		});
+	}
+
+	if (normalized.length > 0) {
+		return normalized.slice(0, 6);
+	}
+
+	return citations.slice(0, 6).map((citation) => ({
+		citationHandle: citation.citationHandle,
+		relevance: citation.score,
+		rationale:
+			"Fallback to retrieval rank because the model selected no valid handles.",
+	}));
+}
+
+function citationsByHandles(
+	citations: CitationUnit[],
+	handles: string[],
+): CitationUnit[] {
+	const byHandle = new Map(
+		citations.map((citation) => [citation.citationHandle, citation]),
+	);
+
+	return handles.flatMap((handle) => {
+		const citation = byHandle.get(handle);
+
+		return citation ? [citation] : [];
+	});
+}
+
+function directQueryCitationScore(
+	query: string,
+	citation: CitationUnit,
+): number {
+	const queryTokens = tokenize(query);
+
+	if (queryTokens.length === 0) {
+		return 0;
+	}
+
+	const anchorTokens = new Set(tokenize(citation.attestation.anchorText));
+	let anchorOverlap = 0;
+
+	for (const token of queryTokens) {
+		if (anchorTokens.has(token)) {
+			anchorOverlap += 1;
+		}
+	}
+
+	return (
+		anchorOverlap / queryTokens.length +
+		claimCitationScore(query, citation) * 0.25
+	);
+}
+
 function elapsedMs(startedAt: number): number {
 	return Math.round(performance.now() - startedAt);
 }
@@ -345,6 +604,10 @@ function truncateForTrace(text: string): string {
 	const compact = text.replace(/\s+/g, " ").trim();
 
 	return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+}
+
+function roundScore(score: number): number {
+	return Math.round(score * 1000) / 1000;
 }
 
 function selectModelSegments(

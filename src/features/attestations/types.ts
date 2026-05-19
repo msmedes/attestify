@@ -106,6 +106,7 @@ export type AiTraceStep =
 	| ConfigTraceStep
 	| RetrievalPlanTraceStep
 	| RetrievalTraceStep
+	| RerankTraceStep
 	| AnswerSynthesisTraceStep;
 
 export type ConfigTraceStep = {
@@ -155,6 +156,39 @@ export type RetrievalTraceStep = {
 		citationHandles: string[];
 	};
 };
+
+export type RerankTraceStep =
+	| {
+			stage: "rerank";
+			status: "ready";
+			model: string;
+			durationMs: number;
+			input: {
+				query: string;
+				citationHandles: string[];
+			};
+			output: {
+				selected: Array<{
+					citationHandle: string;
+					relevance: number;
+					rationale: string;
+				}>;
+			};
+	  }
+	| {
+			stage: "rerank";
+			status: "fallback";
+			model: string;
+			durationMs: number;
+			input: {
+				query: string;
+				citationHandles: string[];
+			};
+			output: {
+				reason: string;
+				citationHandles: string[];
+			};
+	  };
 
 export type AnswerSynthesisTraceStep =
 	| {
@@ -217,6 +251,16 @@ export type AnswerSynthesisTraceStep =
 
 export type SearchRequest = {
 	query: string;
+};
+
+export type QueryRunSummary = {
+	id: string;
+	createdAt: string;
+	query: string;
+	answerStatus: string;
+	answerText: string;
+	citationCount: number;
+	retrievalQueryCount: number;
 };
 
 export type AiAnswer =

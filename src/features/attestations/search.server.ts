@@ -46,8 +46,18 @@ const EMBEDDING_CACHE_PATH = path.join(
 );
 
 const MAX_CITATIONS = 6;
+const DEFAULT_CHUNK_LIMIT = 5;
+const DEFAULT_CITATION_LIMIT = MAX_CITATIONS;
 const MIN_CITATION_SCORE = 0.14;
 const RELATIVE_CITATION_FLOOR = 0.45;
+
+type SearchCorpusWithQueriesOptions = {
+	query: string;
+	retrievalQueries: string[];
+	chunkLimit?: number;
+	citationLimit?: number;
+	citationScoreFloor?: number;
+};
 
 export async function searchCorpus(query: string): Promise<SearchResponse> {
 	return searchCorpusWithQueries({
@@ -63,10 +73,10 @@ export async function populateSearchIndex() {
 export async function searchCorpusWithQueries({
 	query,
 	retrievalQueries,
-}: {
-	query: string;
-	retrievalQueries: string[];
-}): Promise<SearchResponse> {
+	chunkLimit = DEFAULT_CHUNK_LIMIT,
+	citationLimit = DEFAULT_CITATION_LIMIT,
+	citationScoreFloor = MIN_CITATION_SCORE,
+}: SearchCorpusWithQueriesOptions): Promise<SearchResponse> {
 	await ensureIndex();
 
 	const normalizedRetrievalQueries = normalizeRetrievalQueries([
@@ -113,7 +123,7 @@ export async function searchCorpusWithQueries({
 			];
 		})
 		.sort((left, right) => right.score - left.score)
-		.slice(0, 5);
+		.slice(0, chunkLimit);
 
 	const citationCandidates = retrievalChunks
 		.flatMap((chunk) => {
@@ -134,7 +144,10 @@ export async function searchCorpusWithQueries({
 			);
 		})
 		.sort((left, right) => right.score - left.score);
-	const citations = selectCitationUnits(scoringQuery, citationCandidates);
+	const citations = selectCitationUnits(scoringQuery, citationCandidates, {
+		limit: citationLimit,
+		minScore: citationScoreFloor,
+	});
 
 	return {
 		query,
@@ -194,6 +207,10 @@ function normalizeRetrievalQueries(queries: string[]): string[] {
 function selectCitationUnits(
 	query: string,
 	candidates: CitationUnit[],
+	options: {
+		limit: number;
+		minScore: number;
+	},
 ): CitationUnit[] {
 	const verifiedCandidates = candidates.filter(
 		(candidate) => candidate.support.verifiedAgainstSource,
@@ -217,12 +234,12 @@ function selectCitationUnits(
 
 	const topScore = candidatePool.at(0)?.score ?? 0;
 	const scoreFloor = Math.max(
-		MIN_CITATION_SCORE,
+		options.minScore,
 		topScore * RELATIVE_CITATION_FLOOR,
 	);
 	const selected = candidatePool
 		.filter((candidate) => candidate.score >= scoreFloor)
-		.slice(0, MAX_CITATIONS);
+		.slice(0, options.limit);
 
 	return selected.length > 0
 		? selected

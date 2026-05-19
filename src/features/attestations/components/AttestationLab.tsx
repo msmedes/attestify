@@ -1,10 +1,11 @@
 import { Database, Search } from "lucide-react";
 import { useState } from "react";
-import { useSearchAttestations } from "../queries";
+import { useQueryHistory, useSearchAttestations } from "../queries";
 import { AnswerPanel } from "./internal/AnswerPanel";
 import { CorpusBrowser, type CorpusView } from "./internal/CorpusBrowser";
 import { CorpusSidebar } from "./internal/CorpusSidebar";
 import { EvidenceColumn } from "./internal/EvidenceColumn";
+import { QueryHistoryPanel } from "./internal/QueryHistoryPanel";
 import { RawChunkPanel } from "./internal/RawChunkPanel";
 import { SearchBar } from "./internal/SearchBar";
 
@@ -20,6 +21,7 @@ export function AttestationLab() {
 	const [query, setQuery] = useState(sampleQueries[0]);
 	const [corpusView, setCorpusView] = useState<CorpusView | null>(null);
 	const search = useSearchAttestations();
+	const history = useQueryHistory();
 	const result = search.data ?? null;
 
 	function submitQuery(nextQuery: string) {
@@ -118,6 +120,14 @@ export function AttestationLab() {
 									</div>
 								</div>
 							)}
+							<QueryHistoryPanel
+								isLoading={history.isLoading}
+								onQuerySelected={(selectedQuery) => {
+									setQuery(selectedQuery);
+									submitQuery(selectedQuery);
+								}}
+								runs={history.data ?? []}
+							/>
 						</section>
 
 						<EvidenceColumn citations={result?.citations ?? []} />
