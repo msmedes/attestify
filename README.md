@@ -4,6 +4,18 @@
 
 A TanStack Start prototype for source-faithful citations over a real imported corpus. It imports public-domain Project Gutenberg texts, segments raw text into citeable spans, generates sentence/passage attestations with exact anchors, indexes the spans in Vectra, and returns citation units rather than arbitrary RAG chunks.
 
+## License
+
+This project is source-available for local evaluation only. You may clone,
+install, build, and run the app locally, but you may not use it commercially or
+in commercial processes, including internal business operations, client work,
+revenue-generating workflows, commercial analysis, reports, datasets, products,
+services, or decision-making. You also may not host it for others, redistribute
+it, publish modified versions, or create derivative works without prior written
+permission.
+
+See [LICENSE](./LICENSE) for the full terms.
+
 The current generated corpus is built from:
 
 - Hamlet

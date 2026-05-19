@@ -1,6 +1,7 @@
 {
   "name": "attestify",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "imports": {
     "#/*": "./src/*"

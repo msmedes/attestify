@@ -1,0 +1,61 @@
+Attestify Local Evaluation License
+
+Copyright (c) 2026 Michael Smedes
+
+This software and its source code are made available only for local evaluation.
+All rights are reserved except for the limited permissions stated below.
+
+Permission
+
+You may:
+
+1. View the source code.
+2. Clone or download a copy of the software.
+3. Install dependencies, build the software, and run the software locally on a
+   machine you control, solely for personal evaluation, testing, or review.
+4. Make local modifications only as needed to run, test, or evaluate the
+   software on that local machine.
+
+Restrictions
+
+You may not, without prior written permission from the copyright holder:
+
+1. Use the software or any part of it for commercial purposes, including
+   internal business operations, client work, revenue-generating workflows,
+   commercial research, commercial analysis, or commercial decision-making
+   processes.
+2. Use the software or any part of it to provide a hosted, managed, public, or
+   network-accessible service to any third party.
+3. Distribute, sublicense, sell, lease, rent, publish, or otherwise make
+   available copies of the software or modified versions of the software.
+4. Create, distribute, or publish derivative works based on the software.
+5. Remove, obscure, or alter copyright, license, or attribution notices.
+6. Use outputs from the software in any commercial product, service, workflow,
+   report, dataset, model, or decision-making process.
+7. Use the software or its outputs to train, fine-tune, evaluate, or improve
+   machine-learning models or datasets.
+
+No Patent or Trademark License
+
+No patent rights, trademark rights, service mark rights, trade name rights, or
+branding rights are granted under this license.
+
+Third-Party Materials
+
+Third-party dependencies and external content included with or used by the
+software remain subject to their own licenses and terms. This license applies
+only to the portions of the software owned by the copyright holder.
+
+Termination
+
+If you violate this license, your permission to use the software terminates
+automatically and you must stop using the software and delete all copies in your
+possession or control.
+
+Disclaimer
+
+The software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to warranties of merchantability, fitness for
+a particular purpose, and non-infringement. In no event shall the copyright
+holder be liable for any claim, damages, or other liability arising from or in
+connection with the software or its use.
