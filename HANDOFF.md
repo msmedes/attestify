@@ -218,13 +218,46 @@ npm run populate:embeddings
 Built-server run path:
 
 ```bash
-PATH="/Users/mikesmedes/.nvm/versions/node/v23.5.0/bin:$PATH" npm run build
-PORT=3010 node .output/server/index.mjs
+PATH="/Users/mikesmedes/.nvm/versions/node/v23.5.0/bin:$PATH" npm run preview
 ```
 
 Then open `http://localhost:3010/`.
 
-The plain dev server is currently not the verified path. `npm run dev` has hit `EMFILE: too many open files, watch` on this machine.
+`npm run preview` is the supported local preview path. It builds first, then
+serves the built TanStack Start/Nitro output on port 3010. If the app is already
+built, `npm run start:preview` starts only the server.
+
+The plain dev server is currently not the verified path. `npm run dev` has hit
+`EMFILE: too many open files, watch` on this machine.
+
+Preview smoke test:
+
+```bash
+PATH="/Users/mikesmedes/.nvm/versions/node/v23.5.0/bin:$PATH" npm run verify:preview
+```
+
+The smoke test starts the built server with `ATTESTIFY_OPENAI_DISABLED=true`,
+`OPENAI_API_KEY=`, and `OPENAI_EMBEDDINGS=false`, then checks app-owned preview
+behavior: app shell, retrieval-only answer fallback, citation/raw chunk data,
+corpus browser data, and query history.
+
+Manual browser verification checklist:
+
+- Search/answer entry: submit `What is the mousetrap in Hamlet?`.
+- Citation cards: verify source cards and citation handles appear in the
+  evidence column.
+- Raw chunks: verify retrieved source spans render in the raw chunk panel.
+- Evidence column: open a citation and inspect title, section, locator, quote,
+  and source text.
+- Corpus browser/sidebar: open documents, spans, and claims from the sidebar.
+- Query history: select a saved run and confirm it loads without a new query.
+- Answer trace panels: without `OPENAI_API_KEY`, expect unavailable answer
+  synthesis and a missing-key config trace.
+
+OpenAI-enabled answer synthesis is credential-dependent and separate from the
+no-key fallback. With `OPENAI_API_KEY` configured, repeat the browser path and
+verify retrieval planning, reranking, answer synthesis, cited answer segments,
+and trace panels.
 
 ## Environment
 
@@ -238,9 +271,12 @@ OPENAI_MODEL=gpt-5.4-nano
 OPENAI_EMBEDDINGS=true
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMENSIONS=1024
+ATTESTIFY_OPENAI_DISABLED=false
 ```
 
 `OPENAI_EMBEDDINGS=false` forces the local hash embedding fallback.
+`ATTESTIFY_OPENAI_DISABLED=true` forces retrieval-only behavior even when
+`.env.local` contains OpenAI credentials.
 
 ## Tests and Evals
 

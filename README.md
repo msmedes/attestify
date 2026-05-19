@@ -38,11 +38,26 @@ Use Node 20.19+ or Node 22.12+. This machine was verified with Node 23.5.0.
 ```bash
 npm install
 npm run import:corpus
-npm run build
-PORT=3010 node .output/server/index.mjs
+npm run preview
 ```
 
 Then open `http://localhost:3010/`.
+
+`npm run preview` is the supported local preview path. It builds first, then
+serves the built TanStack Start/Nitro output on port 3010. If you only need to
+start an already-built server, use `npm run start:preview`.
+
+To smoke-test the same built preview path without an OpenAI key:
+
+```bash
+npm run verify:preview
+```
+
+The smoke test builds the app, starts the built server on `http://localhost:3010`,
+sets `ATTESTIFY_OPENAI_DISABLED=true`, `OPENAI_API_KEY=`, and
+`OPENAI_EMBEDDINGS=false`, then checks the app shell, retrieval-only answer
+fallback, corpus browser endpoint, citation/raw chunk data, and query history
+write.
 
 ## Environment
 
@@ -54,6 +69,7 @@ OPENAI_MODEL=gpt-5.4-nano
 OPENAI_EMBEDDINGS=true
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMENSIONS=1024
+ATTESTIFY_OPENAI_DISABLED=false
 ```
 
 `OPENAI_MODEL` defaults to `gpt-5.4-nano` when omitted.
@@ -61,6 +77,9 @@ OPENAI_EMBEDDING_DIMENSIONS=1024
 `OPENAI_EMBEDDINGS` defaults to enabled when `OPENAI_API_KEY` is present. Set
 `OPENAI_EMBEDDINGS=false` to use the local deterministic hash embedding fallback
 instead of calling OpenAI.
+
+Set `ATTESTIFY_OPENAI_DISABLED=true` to force the retrieval-only local fallback
+even when `.env.local` contains OpenAI credentials.
 
 ## Answer Pipeline
 
@@ -138,13 +157,41 @@ rebuild, delete `.data/` and run the first search again.
 npm run dev
 ```
 
-On this machine, the Vite dev server currently hits the local file-descriptor limit, so the verified path is the built Nitro server above.
+On this machine, the Vite dev server currently hits the local file-descriptor
+limit, so `npm run dev` is not the verified path. Use `npm run preview` for
+local browser verification until the watcher failure is fixed and checked in a
+browser.
+
+## Browser Verification
+
+Use `npm run preview`, open `http://localhost:3010/`, and verify these panels
+before claiming UI/browser coverage:
+
+- Search/answer entry: submit `What is the mousetrap in Hamlet?`.
+- Citation cards: confirm the evidence column fills with source cards and
+  citation handles.
+- Raw chunks: confirm retrieved source spans render in the raw chunk panel.
+- Evidence column: open at least one citation and check title, section, locator,
+  quote, and source text are present.
+- Corpus browser/sidebar: open the documents, spans, and claims views from the
+  sidebar.
+- Query history: confirm the submitted query appears, then select it and verify
+  the saved run loads without re-submitting.
+- Answer trace panels: confirm the trace explains each stage. Without
+  `OPENAI_API_KEY`, the expected answer synthesis state is unavailable with a
+  missing-key config trace.
+
+OpenAI-enabled answer synthesis is a separate credential-dependent check. With
+`OPENAI_API_KEY` configured, run the same browser path and verify retrieval
+planning, reranking, answer synthesis, cited answer segments, and trace panels.
+Do not treat that as part of the no-key local fallback.
 
 ## Test
 
 ```bash
 npm run check
 npm run test
+npm run build
 ```
 
 Generated-answer evals use `vitest-evals` and call the configured OpenAI model:

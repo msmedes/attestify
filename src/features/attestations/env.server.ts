@@ -20,6 +20,20 @@ export function loadServerEnv() {
 	}
 }
 
+export function getOpenAiUnavailableReason(): string | null {
+	loadServerEnv();
+
+	if (process.env.ATTESTIFY_OPENAI_DISABLED === "true") {
+		return "OpenAI is disabled by ATTESTIFY_OPENAI_DISABLED.";
+	}
+
+	if (!process.env.OPENAI_API_KEY) {
+		return "OPENAI_API_KEY is not configured.";
+	}
+
+	return null;
+}
+
 function parseEnvFile(contents: string): Array<[string, string]> {
 	return contents.split(/\r?\n/).flatMap((line): Array<[string, string]> => {
 		const trimmed = line.trim();

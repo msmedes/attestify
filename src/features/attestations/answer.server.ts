@@ -6,7 +6,7 @@ import {
 } from "@tanstack/ai-openai";
 import { z } from "zod";
 import { tokenize } from "./embed";
-import { loadServerEnv } from "./env.server";
+import { getOpenAiUnavailableReason } from "./env.server";
 import { tryRecordQueryRun } from "./history.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
@@ -75,10 +75,10 @@ const aiAnswerSchema = z.object({
 type ModelClaim = z.infer<typeof aiAnswerSchema>["claims"][number];
 
 export async function answerCorpus(query: string): Promise<SearchResponse> {
-	loadServerEnv();
 	const traceSteps: AiTraceStep[] = [];
+	const openAiUnavailableReason = getOpenAiUnavailableReason();
 
-	if (!process.env.OPENAI_API_KEY) {
+	if (openAiUnavailableReason) {
 		const search = await searchCorpusWithQueries({
 			query,
 			retrievalQueries: [query],
@@ -86,7 +86,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 		traceSteps.push({
 			stage: "config",
 			status: "skipped",
-			error: "OPENAI_API_KEY is not configured.",
+			error: openAiUnavailableReason,
 		});
 
 		const response = {
@@ -94,7 +94,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 			aiTrace: { steps: traceSteps },
 			aiAnswer: {
 				status: "unavailable",
-				message: "OPENAI_API_KEY is not configured for the AI answer route.",
+				message: openAiUnavailableReason,
 			},
 		} satisfies SearchResponse;
 		tryRecordQueryRun(response);

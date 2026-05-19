@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { embedText as embedLocalText } from "./embed";
-import { loadServerEnv } from "./env.server";
+import { getOpenAiUnavailableReason, loadServerEnv } from "./env.server";
 
 type EmbeddingProvider = "local-hash" | "openai";
 
@@ -24,7 +24,7 @@ export function getEmbeddingConfig(): EmbeddingConfig {
 
 	if (
 		process.env.NODE_ENV === "test" ||
-		!process.env.OPENAI_API_KEY ||
+		getOpenAiUnavailableReason() ||
 		process.env.OPENAI_EMBEDDINGS === "false"
 	) {
 		return {
