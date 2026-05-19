@@ -1,3 +1,5 @@
+<img width="1496" height="1506" alt="image" src="https://github.com/user-attachments/assets/f33b6c83-c419-4330-8fbb-a3313bd3ffc3" />
+
 # Attestify
 
 A TanStack Start prototype for source-faithful citations over a real imported corpus. It imports public-domain Project Gutenberg texts, segments raw text into citeable spans, generates sentence/passage attestations with exact anchors, indexes the spans in Vectra, and returns citation units rather than arbitrary RAG chunks.
