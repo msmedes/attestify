@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { AttestationType } from "./types";
 
 export type IngestionSourceKind = string;
+export type IngestionAttestationType = string;
 
 export type ConnectorMetadata = {
 	workspaceId?: string;
@@ -71,7 +71,7 @@ export type AttestationCandidate = {
 	extractionRunId: string;
 	snapshotId: string;
 	spanId: string;
-	type: AttestationType;
+	type: IngestionAttestationType;
 	subject: string;
 	predicate: string;
 	value: string;
@@ -105,7 +105,7 @@ export function createSourceSnapshot(
 	);
 	const title = requireNonEmpty(input.title, "title");
 	const kind = requireNonEmpty(input.kind, "kind");
-	const content = requireNonEmpty(input.content, "content");
+	const content = requireSourceText(input.content, "content");
 	const contentHash = sha256(content);
 	const sourceId = stableId("src", [connectorId, externalSourceId]);
 	const snapshotVersion =
@@ -138,7 +138,7 @@ export function createSourceSpanCandidate({
 	const normalizedSection = requireNonEmpty(section, "section");
 	const normalizedLocator = requireNonEmpty(locator, "locator");
 	const normalizedSpanKey = requireNonEmpty(spanKey, "spanKey");
-	const normalizedText = requireNonEmpty(text, "text");
+	const normalizedText = requireSourceText(text, "text");
 
 	return {
 		spanId: stableId("span", [snapshot.snapshotId, normalizedSpanKey]),
@@ -198,13 +198,14 @@ export function createAttestationCandidate({
 	predicate: string;
 	span: SourceSpanCandidate;
 	subject: string;
-	type: AttestationType;
+	type: IngestionAttestationType;
 	value: string;
 }): AttestationCandidate {
 	const normalizedSubject = requireNonEmpty(subject, "subject");
 	const normalizedPredicate = requireNonEmpty(predicate, "predicate");
+	const normalizedType = requireNonEmpty(type, "type");
 	const normalizedValue = requireNonEmpty(value, "value");
-	const normalizedAnchorText = requireNonEmpty(anchorText, "anchorText");
+	const normalizedAnchorText = requireSourceText(anchorText, "anchorText");
 
 	if (extractionRun.snapshotId !== span.snapshotId) {
 		throw new IngestionContractError(
@@ -216,7 +217,7 @@ export function createAttestationCandidate({
 		candidateId: stableId("candidate", [
 			extractionRun.extractionRunId,
 			span.spanId,
-			type,
+			normalizedType,
 			normalizedSubject,
 			normalizedPredicate,
 			normalizedValue,
@@ -225,7 +226,7 @@ export function createAttestationCandidate({
 		extractionRunId: extractionRun.extractionRunId,
 		snapshotId: extractionRun.snapshotId,
 		spanId: span.spanId,
-		type,
+		type: normalizedType,
 		subject: normalizedSubject,
 		predicate: normalizedPredicate,
 		value: normalizedValue,
@@ -284,6 +285,14 @@ function requireNonEmpty(value: string, fieldName: string): string {
 	return normalized;
 }
 
+function requireSourceText(value: string, fieldName: string): string {
+	if (!value.trim()) {
+		throw new IngestionContractError(`${fieldName} is required.`);
+	}
+
+	return value;
+}
+
 function normalizeOptional(value: string | undefined): string | undefined {
 	const normalized = value?.replace(/\s+/g, " ").trim();
 
@@ -332,7 +341,7 @@ function stableIdPart(value: string): string {
 			.replace(/^-+|-+$/g, "")
 			.slice(0, 48) || "opaque";
 
-	return `${slug}-${sha256(value).slice(0, 12)}`;
+	return `${slug}-${sha256(value).slice(0, 32)}`;
 }
 
 function sha256(value: string): string {

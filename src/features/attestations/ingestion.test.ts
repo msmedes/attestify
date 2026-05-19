@@ -29,11 +29,11 @@ describe("ingestion contract", () => {
 		expect(snapshot.externalSourceId).toBe("1524");
 		expect(snapshot.kind).toBe("notion-page");
 		expect(snapshot.sourceId).toMatch(
-			/^src:fixture-gutenberg-[a-f0-9]{12}:1524-[a-f0-9]{12}$/,
+			/^src:fixture-gutenberg-[a-f0-9]{32}:1524-[a-f0-9]{32}$/,
 		);
 		expect(snapshot.snapshotVersion).toBe("gutenberg-1524-static");
 		expect(snapshot.snapshotId).toMatch(
-			/^snapshot:src-fixture-gutenberg-[a-f0-9-]+:gutenberg-1524-static-[a-f0-9]{12}:[a-f0-9]+-[a-f0-9]{12}$/,
+			/^snapshot:src-fixture-gutenberg-[a-f0-9-]+:gutenberg-1524-static-[a-f0-9]{32}:[a-f0-9]+-[a-f0-9]{32}$/,
 		);
 		expect(snapshot.contentHash).toHaveLength(64);
 		expect(snapshot.metadata).toEqual({
@@ -41,6 +41,53 @@ describe("ingestion contract", () => {
 			authorName: "William Shakespeare",
 			labels: ["drama"],
 		});
+	});
+
+	it("preserves source text whitespace in snapshots, spans, and anchors", () => {
+		const content = "Line 1\n\n  Line 2";
+		const snapshot = createSourceSnapshot({
+			connectorId: "fixture",
+			externalSourceId: "whitespace-doc",
+			kind: "transcript",
+			title: "Whitespace Source",
+			content,
+		});
+		const span = createSourceSpanCandidate({
+			snapshot,
+			spanKey: "segment-1",
+			section: "Segment 1",
+			locator: "00:00:01-00:00:03",
+			text: "Speaker:\n  Line 2",
+		});
+		const extractionRun = createExtractionRun({
+			snapshot,
+			extractorId: "fixture-script",
+			extractorVersion: "1.0.0",
+			startedAt: "2026-05-19T00:00:00.000Z",
+		});
+		const candidate = createAttestationCandidate({
+			extractionRun,
+			span,
+			type: "custom-transcript-claim",
+			subject: "Speaker",
+			predicate: "says",
+			value: "Line 2",
+			context: "",
+			anchorText: "Speaker:\n  Line 2",
+		});
+
+		expect(snapshot.content).toBe(content);
+		expect(snapshot.contentHash).toHaveLength(64);
+		expect(span.text).toBe("Speaker:\n  Line 2");
+		expect(candidate.type).toBe("custom-transcript-claim");
+		expect(candidate.anchorText).toBe("Speaker:\n  Line 2");
+		expect(
+			verifyAttestationCandidate({
+				candidate,
+				span,
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			}).support.verifiedAgainstSource,
+		).toBe(true);
 	});
 
 	it("keeps distinct external identities distinct after normalization", () => {
