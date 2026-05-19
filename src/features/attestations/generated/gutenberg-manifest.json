@@ -1,0 +1,69 @@
+{
+  "stats": {
+    "documents": 6,
+    "spans": 3889,
+    "attestations": 7330
+  },
+  "sources": [
+    {
+      "sourceId": "hamlet",
+      "kind": "play",
+      "title": "Hamlet",
+      "attribution": "Project Gutenberg eBook #1524",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/1524.txt.utf-8",
+      "spans": 675,
+      "attestations": 1118
+    },
+    {
+      "sourceId": "macbeth",
+      "kind": "play",
+      "title": "Macbeth",
+      "attribution": "Project Gutenberg eBook #1533",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/1533.txt.utf-8",
+      "spans": 439,
+      "attestations": 696
+    },
+    {
+      "sourceId": "crime-and-punishment",
+      "kind": "novel",
+      "title": "Crime and Punishment",
+      "attribution": "Project Gutenberg eBook #2554",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/2554.txt.utf-8",
+      "spans": 700,
+      "attestations": 1524
+    },
+    {
+      "sourceId": "pride-and-prejudice",
+      "kind": "novel",
+      "title": "Pride and Prejudice",
+      "attribution": "Project Gutenberg eBook #1342",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/1342.txt.utf-8",
+      "spans": 700,
+      "attestations": 1414
+    },
+    {
+      "sourceId": "adventures-of-sherlock-holmes",
+      "kind": "story-collection",
+      "title": "The Adventures of Sherlock Holmes",
+      "attribution": "Project Gutenberg eBook #1661",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/1661.txt.utf-8",
+      "spans": 700,
+      "attestations": 1518
+    },
+    {
+      "sourceId": "alice-in-wonderland",
+      "kind": "novel",
+      "title": "Alice's Adventures in Wonderland",
+      "attribution": "Project Gutenberg eBook #11",
+      "updatedAt": "2026-05-19",
+      "sourceUrl": "https://www.gutenberg.org/ebooks/11.txt.utf-8",
+      "spans": 675,
+      "attestations": 1060
+    }
+  ]
+}
