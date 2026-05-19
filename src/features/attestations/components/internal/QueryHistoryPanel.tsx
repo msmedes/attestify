@@ -25,9 +25,9 @@ export function QueryHistoryPanel({
 
 			<div className="max-h-[340px] overflow-y-auto">
 				{isLoading ? (
-					<div className="p-4 text-[#686a64] text-sm">
+					<output className="block p-4 text-[#686a64] text-sm">
 						Loading previous runs...
-					</div>
+					</output>
 				) : null}
 
 				{!isLoading && runs.length === 0 ? (
@@ -36,6 +36,7 @@ export function QueryHistoryPanel({
 
 				{runs.map((run) => (
 					<button
+						aria-pressed={activeRunId === run.id}
 						className={`block min-h-24 w-full border-[#d6d8cf] border-b p-4 text-left transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px] ${
 							activeRunId === run.id ? "bg-[#d8eee7]" : ""
 						}`}

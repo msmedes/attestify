@@ -16,6 +16,16 @@ export function AnswerPanel({
 	query,
 	retrievalQueries,
 }: AnswerPanelProps) {
+	const retrievalQueryItems = withOccurrenceKeys(
+		retrievalQueries,
+		(retrievalQuery) => retrievalQuery,
+	);
+	const answerSegmentItems =
+		aiAnswer?.status === "ready"
+			? withOccurrenceKeys(aiAnswer.segments, segmentKeyBase)
+			: [];
+	const lineItems = withOccurrenceKeys(lines, (line) => line);
+
 	return (
 		<section className="border border-[#20211f] bg-[#ffffff]">
 			<div className="flex items-center justify-between border-[#20211f] border-b px-4 py-3">
@@ -36,10 +46,10 @@ export function AnswerPanel({
 				{retrievalQueries.length > 1 ? (
 					<div className="mb-4 flex flex-wrap gap-2 border-[#d7d8d1] border-b pb-4 text-sm leading-5">
 						<span className="text-[#6f716d]">retrieval plan</span>
-						{retrievalQueries.map((retrievalQuery) => (
+						{retrievalQueryItems.map(({ item: retrievalQuery, key }) => (
 							<span
 								className="max-w-full break-words border border-[#c9cac3] bg-[#f4f5ef] px-2 py-1 text-[#20211f]"
-								key={retrievalQuery}
+								key={key}
 							>
 								{retrievalQuery}
 							</span>
@@ -49,14 +59,14 @@ export function AnswerPanel({
 
 				{aiAnswer?.status === "ready" ? (
 					<p className="max-w-[72ch]">
-						{aiAnswer.segments.map((segment) =>
+						{answerSegmentItems.map(({ item: segment, key }) =>
 							segment.type === "text" ? (
-								<span key={`text:${segment.text}`}>{segment.text}</span>
+								<span key={key}>{segment.text}</span>
 							) : (
 								<CitationMarker
 									citedText={segment.text}
 									citationNumber={segment.citationNumber}
-									key={`citation:${segment.citationHandle}:${segment.text ?? ""}`}
+									key={key}
 									quote={segment.quote}
 									sourceText={segment.sourceText}
 									title={`${segment.sourceTitle}, ${segment.section}, ${segment.locator}`}
@@ -75,8 +85,8 @@ export function AnswerPanel({
 
 				{!aiAnswer ? (
 					<div className="divide-y divide-[#d7d8d1]">
-						{lines.map((line) => (
-							<p className="py-4" key={line}>
+						{lineItems.map(({ item: line, key }) => (
+							<p className="py-4" key={key}>
 								{line}
 							</p>
 						))}
@@ -87,6 +97,37 @@ export function AnswerPanel({
 			</div>
 		</section>
 	);
+}
+
+function withOccurrenceKeys<T>(
+	items: T[],
+	baseKey: (item: T) => string,
+): Array<{ item: T; key: string }> {
+	const counts = new Map<string, number>();
+
+	return items.map((item) => {
+		const base = baseKey(item);
+		const count = counts.get(base) ?? 0;
+		counts.set(base, count + 1);
+
+		return {
+			item,
+			key: count === 0 ? base : `${base}:${count}`,
+		};
+	});
+}
+
+type ReadyAnswerSegment = Extract<
+	AiAnswer,
+	{ status: "ready" }
+>["segments"][number];
+
+function segmentKeyBase(segment: ReadyAnswerSegment): string {
+	if (segment.type === "text") {
+		return `text:${segment.text}`;
+	}
+
+	return `citation:${segment.citationHandle}:${segment.text ?? ""}`;
 }
 
 function AiTracePanel({ trace }: { trace: AiTrace }) {

@@ -5,10 +5,23 @@ export const Route = createFileRoute("/api/history/$runId")({
 	server: {
 		handlers: {
 			GET: async ({ params }) => {
-				const { getQueryRunDetail } = await import(
+				const { CorruptHistoryRunError, getQueryRunDetail } = await import(
 					"#/features/attestations/history.server"
 				);
-				const run = getQueryRunDetail(params.runId);
+				let run: ReturnType<typeof getQueryRunDetail>;
+
+				try {
+					run = getQueryRunDetail(params.runId);
+				} catch (error) {
+					if (error instanceof CorruptHistoryRunError) {
+						return Response.json(
+							{ error: "History run is corrupt and cannot be loaded." },
+							{ status: 500 },
+						);
+					}
+
+					throw error;
+				}
 
 				if (!run) {
 					return new Response("History run not found.", {

@@ -56,6 +56,10 @@ export function CorpusSidebar({
 						{corpusManifest.sources.map((source) => (
 							<li key={source.sourceId}>
 								<button
+									aria-pressed={
+										activeView?.type === "source" &&
+										activeView.sourceId === source.sourceId
+									}
 									className={`min-h-10 w-full text-left transition-colors hover:text-[#ffffff] focus-visible:outline-2 focus-visible:outline-[#d8eee7] focus-visible:outline-offset-2 ${
 										activeView?.type === "source" &&
 										activeView.sourceId === source.sourceId
@@ -96,6 +100,7 @@ function Metric({
 }) {
 	return (
 		<button
+			aria-pressed={active}
 			className={`min-h-24 border p-3 text-left transition-colors transition-transform hover:border-[#f7f7f2] hover:bg-[#3b6d65] active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-[#d8eee7] focus-visible:outline-offset-2 ${
 				active
 					? "border-[#f7f7f2] bg-[#3b6d65]"

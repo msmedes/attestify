@@ -30,9 +30,18 @@ export function AttestationLab() {
 	const search = useSearchAttestations();
 	const history = useQueryHistory();
 	const selectedHistoryRun = useQueryHistoryRun(selectedHistoryRunId);
+	const isViewingHistory = selectedHistoryRunId !== null;
 	const result = selectedHistoryRunId
 		? (selectedHistoryRun.data?.response ?? null)
 		: (search.data ?? null);
+	const isResultLoading =
+		search.isPending || (isViewingHistory && selectedHistoryRun.isPending);
+	const activeError =
+		isViewingHistory && selectedHistoryRun.isError
+			? selectedHistoryRun.error
+			: !isViewingHistory && search.isError
+				? search.error
+				: null;
 
 	function submitQuery(nextQuery: string) {
 		const trimmedQuery = nextQuery.trim();
@@ -42,6 +51,7 @@ export function AttestationLab() {
 		}
 
 		setSelectedHistoryRunId(null);
+		search.reset();
 		search.mutate({ query: trimmedQuery });
 	}
 
@@ -96,23 +106,29 @@ export function AttestationLab() {
 					</div>
 
 					<div className="grid flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px]">
-						<section className="flex min-h-0 flex-col gap-5 p-5 md:p-8">
-							{search.isError ? (
-								<div className="border border-[#9f2f2f] bg-[#fff7f4] p-4 text-[#7a2424]">
-									{search.error.message}
-								</div>
-							) : null}
-
-							{selectedHistoryRun.isError ? (
-								<div className="border border-[#9f2f2f] bg-[#fff7f4] p-4 text-[#7a2424]">
-									{selectedHistoryRun.error.message}
+						<section
+							aria-busy={isResultLoading}
+							className="flex min-h-0 flex-col gap-5 p-5 md:p-8"
+						>
+							{activeError ? (
+								<div
+									className="border border-[#9f2f2f] bg-[#fff7f4] p-4 text-[#7a2424]"
+									role="alert"
+								>
+									{activeError.message}
 								</div>
 							) : null}
 
 							{selectedHistoryRunId && selectedHistoryRun.isPending ? (
-								<div className="border border-[#20211f] bg-[#ffffff] p-4 text-[#686a64]">
+								<output className="border border-[#20211f] bg-[#ffffff] p-4 text-[#686a64]">
 									Loading saved run...
-								</div>
+								</output>
+							) : null}
+
+							{!selectedHistoryRunId && search.isPending ? (
+								<output className="border border-[#20211f] bg-[#ffffff] p-4 text-[#686a64]">
+									Searching source attestations...
+								</output>
 							) : null}
 
 							{result ? (

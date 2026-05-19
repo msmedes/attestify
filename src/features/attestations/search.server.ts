@@ -51,6 +51,8 @@ const DEFAULT_CITATION_LIMIT = MAX_CITATIONS;
 const MIN_CITATION_SCORE = 0.14;
 const RELATIVE_CITATION_FLOOR = 0.45;
 
+let ensureIndexPromise: Promise<void> | null = null;
+
 type SearchCorpusWithQueriesOptions = {
 	query: string;
 	retrievalQueries: string[];
@@ -247,6 +249,14 @@ function selectCitationUnits(
 }
 
 async function ensureIndex() {
+	ensureIndexPromise ??= ensureIndexCreated().finally(() => {
+		ensureIndexPromise = null;
+	});
+
+	return ensureIndexPromise;
+}
+
+async function ensureIndexCreated() {
 	const spans = listSpans();
 	const embeddingConfig = getEmbeddingConfig();
 	const indexConfig = readIndexConfig();

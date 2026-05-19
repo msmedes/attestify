@@ -1,18 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import type { SearchRequest } from "#/features/attestations/types";
+import {
+	parseSearchRequest,
+	searchRequestErrorResponse,
+} from "#/features/attestations/request";
 
 export const Route = createFileRoute("/api/answer")({
 	server: {
 		handlers: {
 			POST: async ({ request }) => {
-				const body = (await request.json()) as Partial<SearchRequest>;
-				const query = typeof body.query === "string" ? body.query.trim() : "";
+				let query: string;
 
-				if (query.length < 2) {
-					return new Response("Query must be at least 2 characters.", {
-						status: 400,
-					});
+				try {
+					query = (await parseSearchRequest(request)).query;
+				} catch (error) {
+					const response = searchRequestErrorResponse(error);
+
+					if (response) {
+						return response;
+					}
+
+					throw error;
 				}
 
 				const { answerCorpus } = await import(

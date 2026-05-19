@@ -135,7 +135,7 @@ describeEval(
 				expectedAnchorPattern: "copy|encyclopaedia|red-headed|league",
 				expectedSourceId: "adventures-of-sherlock-holmes",
 			},
-		])("$name", async ({ name: _name, ...input }, { run }) => {
+		])("$name", async (input, { run }) => {
 			const result = await run(input);
 
 			expect(result.output.status).toBe("ready");

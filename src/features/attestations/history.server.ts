@@ -18,6 +18,20 @@ const DATABASE_PATH = path.join(DATA_DIR, "attestify.sqlite");
 
 let sqlite: Database.Database | null = null;
 
+export class CorruptHistoryRunError extends Error {
+	constructor(
+		readonly runId: string,
+		cause: unknown,
+	) {
+		super(
+			cause instanceof Error
+				? `History run ${runId} is corrupt: ${cause.message}`
+				: `History run ${runId} is corrupt.`,
+		);
+		this.name = "CorruptHistoryRunError";
+	}
+}
+
 function getDb() {
 	mkdirSync(DATA_DIR, { recursive: true });
 
@@ -52,7 +66,9 @@ export function recordQueryRun(response: SearchResponse) {
 			createdAt: new Date(),
 			query: response.query,
 			answerStatus: response.aiAnswer?.status ?? "retrieval-only",
-			answerText: answerText(response.aiAnswer?.segments ?? []),
+			answerText: answerText(
+				response.aiAnswer?.status === "ready" ? response.aiAnswer.segments : [],
+			),
 			retrievalQueriesJson: JSON.stringify(response.retrievalQueries),
 			retrievalChunksJson: JSON.stringify(response.retrievalChunks),
 			citationsJson: JSON.stringify(response.citations),
@@ -60,6 +76,21 @@ export function recordQueryRun(response: SearchResponse) {
 			responseJson: JSON.stringify(response),
 		})
 		.run();
+}
+
+export function tryRecordQueryRun(response: SearchResponse) {
+	try {
+		recordQueryRun(response);
+	} catch (error) {
+		console.error(
+			"[attestation-rag:history]",
+			JSON.stringify({
+				event: "record-query-run-failed",
+				query: response.query,
+				error: error instanceof Error ? error.message : "Unknown error",
+			}),
+		);
+	}
 }
 
 export function listQueryRunSummaries(limit = 12): QueryRunSummary[] {
@@ -71,8 +102,13 @@ export function listQueryRunSummaries(limit = 12): QueryRunSummary[] {
 		.orderBy(desc(queryRuns.createdAt))
 		.limit(limit)
 		.all()
-		.map((run) => {
-			return summarizeRun(run);
+		.flatMap((run) => {
+			try {
+				return [summarizeRun(run)];
+			} catch (error) {
+				logCorruptHistoryRun(run.id, error);
+				return [];
+			}
 		});
 }
 
@@ -84,17 +120,22 @@ export function getQueryRunDetail(id: string): QueryRunDetail | null {
 		return null;
 	}
 
-	return {
-		...summarizeRun(run),
-		response: JSON.parse(run.responseJson) as SearchResponse,
-	};
+	try {
+		return {
+			...summarizeRun(run),
+			response: parseHistoryJson(run.responseJson) as SearchResponse,
+		};
+	} catch (error) {
+		logCorruptHistoryRun(run.id, error);
+		throw new CorruptHistoryRunError(run.id, error);
+	}
 }
 
 type QueryRunRow = typeof queryRuns.$inferSelect;
 
 function summarizeRun(run: QueryRunRow): QueryRunSummary {
-	const citations = JSON.parse(run.citationsJson) as unknown[];
-	const retrievalQueries = JSON.parse(run.retrievalQueriesJson) as unknown[];
+	const citations = parseHistoryArray(run.citationsJson);
+	const retrievalQueries = parseHistoryArray(run.retrievalQueriesJson);
 
 	return {
 		id: run.id,
@@ -105,6 +146,39 @@ function summarizeRun(run: QueryRunRow): QueryRunSummary {
 		citationCount: citations.length,
 		retrievalQueryCount: retrievalQueries.length,
 	};
+}
+
+function parseHistoryArray(json: string): unknown[] {
+	const value = parseHistoryJson(json);
+
+	if (!Array.isArray(value)) {
+		throw new Error("Expected persisted history JSON to be an array.");
+	}
+
+	return value;
+}
+
+function parseHistoryJson(json: string): unknown {
+	try {
+		return JSON.parse(json) as unknown;
+	} catch (error) {
+		throw new Error(
+			error instanceof Error
+				? `Invalid persisted history JSON: ${error.message}`
+				: "Invalid persisted history JSON.",
+		);
+	}
+}
+
+function logCorruptHistoryRun(id: string, error: unknown) {
+	console.error(
+		"[attestation-rag:history]",
+		JSON.stringify({
+			event: "skip-corrupt-history-run",
+			id,
+			error: error instanceof Error ? error.message : "Unknown error",
+		}),
+	);
 }
 
 function answerText(segments: AiAnswerSegment[]): string {

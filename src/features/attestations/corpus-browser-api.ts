@@ -1,4 +1,8 @@
 import type corpusManifest from "./generated/gutenberg-manifest.json";
+import {
+	corpusBrowserResponseSchema,
+	parseApiResponse,
+} from "./response-schemas";
 import type { Attestation, SourceDocument, SourceSpan } from "./types";
 
 export type CorpusManifest = typeof corpusManifest;
@@ -51,5 +55,9 @@ export async function fetchCorpusBrowserView(
 		throw new Error(message || `Corpus request failed with ${response.status}`);
 	}
 
-	return response.json() as Promise<CorpusBrowserResponse>;
+	return parseApiResponse(
+		corpusBrowserResponseSchema,
+		await response.json(),
+		"Corpus browser",
+	) as CorpusBrowserResponse;
 }

@@ -1,9 +1,13 @@
 import { chat } from "@tanstack/ai";
-import { openaiText } from "@tanstack/ai-openai";
+import {
+	OPENAI_CHAT_MODELS,
+	type OpenAIChatModel,
+	openaiText,
+} from "@tanstack/ai-openai";
 import { z } from "zod";
 import { tokenize } from "./embed";
 import { loadServerEnv } from "./env.server";
-import { recordQueryRun } from "./history.server";
+import { tryRecordQueryRun } from "./history.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
 	AiAnswer,
@@ -92,8 +96,8 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 				status: "unavailable",
 				message: "OPENAI_API_KEY is not configured for the AI answer route.",
 			},
-		};
-		recordQueryRun(response);
+		} satisfies SearchResponse;
+		tryRecordQueryRun(response);
 
 		return response;
 	}
@@ -135,8 +139,8 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 				status: "unavailable",
 				message: retrievalPlan.error,
 			},
-		};
-		recordQueryRun(response);
+		} satisfies SearchResponse;
+		tryRecordQueryRun(response);
 
 		return response;
 	}
@@ -152,13 +156,13 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 		aiTrace: { steps: traceSteps },
 		aiAnswer: generatedAnswer.answer,
 	};
-	recordQueryRun(response);
+	tryRecordQueryRun(response);
 
 	return response;
 }
 
 async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
-	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+	const model = getOpenAIModel();
 	const startedAt = performance.now();
 
 	try {
@@ -277,7 +281,7 @@ async function generateAiAnswer(
 		quote: citation.attestation.anchorText,
 		spanText: citation.span.text,
 	}));
-	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+	const model = getOpenAIModel();
 	let modelAnswer: z.infer<typeof aiAnswerSchema>;
 	const startedAt = performance.now();
 
@@ -371,7 +375,7 @@ async function rerankCitations(
 	query: string,
 	citations: CitationUnit[],
 ): Promise<RerankedCitations> {
-	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+	const model = getOpenAIModel();
 	const startedAt = performance.now();
 	const citationHandles = citations.map((citation) => citation.citationHandle);
 	const evidencePreview = citations.map((citation, index) => ({
@@ -606,6 +610,20 @@ function directQueryCitationScore(
 
 function elapsedMs(startedAt: number): number {
 	return Math.round(performance.now() - startedAt);
+}
+
+function getOpenAIModel(): OpenAIChatModel {
+	const configuredModel = process.env.OPENAI_MODEL ?? "gpt-5.4-nano";
+
+	if (isOpenAIChatModel(configuredModel)) {
+		return configuredModel;
+	}
+
+	throw new Error(`OPENAI_MODEL is not supported: ${configuredModel}`);
+}
+
+function isOpenAIChatModel(model: string): model is OpenAIChatModel {
+	return (OPENAI_CHAT_MODELS as readonly string[]).includes(model);
 }
 
 function logTraceStep(step: AiTraceStep) {

@@ -1,3 +1,9 @@
+import {
+	parseApiResponse,
+	queryRunDetailSchema,
+	queryRunSummarySchema,
+	searchResponseSchema,
+} from "./response-schemas";
 import type {
 	QueryRunDetail,
 	QueryRunSummary,
@@ -25,9 +31,13 @@ export async function listQueryHistory(): Promise<QueryRunSummary[]> {
 		throw new Error(message || `History failed with ${response.status}`);
 	}
 
-	const body = (await response.json()) as { runs: QueryRunSummary[] };
+	const body = await response.json();
 
-	return body.runs;
+	return parseApiResponse(
+		queryRunSummarySchema.array(),
+		(body as { runs?: unknown }).runs,
+		"History",
+	);
 }
 
 export async function getQueryHistoryRun(id: string): Promise<QueryRunDetail> {
@@ -38,9 +48,13 @@ export async function getQueryHistoryRun(id: string): Promise<QueryRunDetail> {
 		throw new Error(message || `History run failed with ${response.status}`);
 	}
 
-	const body = (await response.json()) as { run: QueryRunDetail };
+	const body = await response.json();
 
-	return body.run;
+	return parseApiResponse(
+		queryRunDetailSchema,
+		(body as { run?: unknown }).run,
+		"History run",
+	);
 }
 
 async function postSearchRequest(
@@ -60,5 +74,9 @@ async function postSearchRequest(
 		throw new Error(message || `Search failed with ${response.status}`);
 	}
 
-	return response.json() as Promise<SearchResponse>;
+	return parseApiResponse(
+		searchResponseSchema,
+		await response.json(),
+		"Search",
+	);
 }
