@@ -374,6 +374,15 @@ async function rerankCitations(
 	const model = process.env.OPENAI_MODEL || "gpt-5.4-nano";
 	const startedAt = performance.now();
 	const citationHandles = citations.map((citation) => citation.citationHandle);
+	const evidencePreview = citations.map((citation, index) => ({
+		index: index + 1,
+		citationHandle: citation.citationHandle,
+		source: citation.source.title,
+		location: `${citation.span.section}, ${citation.span.locator}`,
+		quote: truncateForTrace(citation.attestation.anchorText),
+		spanText: truncateForTrace(citation.span.text),
+		retrievalScore: citation.score,
+	}));
 
 	if (citations.length <= 6) {
 		const traceStep: AiTraceStep = {
@@ -384,6 +393,7 @@ async function rerankCitations(
 			input: {
 				query,
 				citationHandles,
+				evidencePreview,
 			},
 			output: {
 				reason: "Candidate set was already small enough for answer synthesis.",
@@ -446,6 +456,7 @@ async function rerankCitations(
 			input: {
 				query,
 				citationHandles,
+				evidencePreview,
 			},
 			output: {
 				selected,
@@ -470,6 +481,7 @@ async function rerankCitations(
 			input: {
 				query,
 				citationHandles,
+				evidencePreview,
 			},
 			output: {
 				reason:

@@ -166,6 +166,15 @@ export type RerankTraceStep =
 			input: {
 				query: string;
 				citationHandles: string[];
+				evidencePreview: Array<{
+					index: number;
+					citationHandle: string;
+					source: string;
+					location: string;
+					quote: string;
+					spanText: string;
+					retrievalScore: number;
+				}>;
 			};
 			output: {
 				selected: Array<{
@@ -183,6 +192,15 @@ export type RerankTraceStep =
 			input: {
 				query: string;
 				citationHandles: string[];
+				evidencePreview: Array<{
+					index: number;
+					citationHandle: string;
+					source: string;
+					location: string;
+					quote: string;
+					spanText: string;
+					retrievalScore: number;
+				}>;
 			};
 			output: {
 				reason: string;
