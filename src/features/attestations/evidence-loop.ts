@@ -9,8 +9,8 @@ import type {
 } from "./types";
 
 const DEFAULT_BUDGETS = {
-	maxIterations: 3,
-	maxModelCalls: 3,
+	maxIterations: 4,
+	maxModelCalls: 4,
 	maxRetrievedSpans: 80,
 	maxInspectedSpans: 8,
 	maxElapsedMs: 8_000,
@@ -515,8 +515,8 @@ function isRepeatedAction(
 ): boolean {
 	return iterations.some(
 		(iteration) =>
-			JSON.stringify(iteration.validatedAction) ===
-			JSON.stringify(traceAction(action)),
+			iteration.validatedAction !== undefined &&
+			actionKey(iteration.validatedAction) === actionKey(traceAction(action)),
 	);
 }
 
@@ -554,4 +554,24 @@ function truncateForTrace(text: string): string {
 	const compact = text.replace(/\s+/g, " ").trim();
 
 	return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
+}
+
+function actionKey(
+	action: NonNullable<
+		EvidenceLoopTraceStep["output"]["iterations"][number]["validatedAction"]
+	>,
+): string {
+	if (action.type === "stop") {
+		return `stop:${action.reason}`;
+	}
+
+	if (action.type === "inspect") {
+		return `inspect:${[...(action.spanIds ?? [])].sort().join("\u0000")}`;
+	}
+
+	return [
+		"search",
+		[...(action.queries ?? [])].sort().join("\u0000"),
+		[...(action.exactPhrases ?? [])].sort().join("\u0000"),
+	].join(":");
 }

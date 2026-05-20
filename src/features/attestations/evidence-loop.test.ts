@@ -239,6 +239,9 @@ describe("runEvidenceLoop", () => {
 			["rabbit hole Alice"],
 			["white rabbit watch waistcoat-pocket"],
 		]);
+		expect(result.traceStep.status).toBe("ready");
+		expect(result.traceStep.output.stopReason).toBe("enough-evidence");
+		expect(result.traceStep.output.budgetUsage.iterations).toBe(4);
 		expect(result.search?.citations).toHaveLength(1);
 		expect(result.traceStep.output.consideredEvidence).toEqual([
 			expect.objectContaining({
@@ -296,6 +299,71 @@ describe("runEvidenceLoop", () => {
 					validatedAction: {
 						type: "inspect",
 						spanIds: ["span-1"],
+					},
+				}),
+				expect.objectContaining({
+					rejectedAction: {
+						reason: "Repeated evidence action.",
+					},
+				}),
+			],
+		});
+	});
+
+	it("rejects repeated inspection actions with reordered span IDs", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice rabbit"] },
+				{ type: "inspect", spanIds: ["span-1", "span-2"] },
+				{ type: "inspect", spanIds: ["span-2", "span-1"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 2 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.any(Object),
+				expect.objectContaining({
+					validatedAction: {
+						type: "inspect",
+						spanIds: ["span-1", "span-2"],
+					},
+				}),
+				expect.objectContaining({
+					rejectedAction: {
+						reason: "Repeated evidence action.",
+					},
+				}),
+			],
+		});
+	});
+
+	it("rejects repeated searches with reordered queries", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice rabbit", "waistcoat pocket"] },
+				{ type: "search", queries: ["waistcoat pocket", "Alice rabbit"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.objectContaining({
+					validatedAction: {
+						type: "search",
+						queries: ["Alice rabbit", "waistcoat pocket"],
+						exactPhrases: [],
 					},
 				}),
 				expect.objectContaining({

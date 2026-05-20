@@ -321,13 +321,6 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 		query,
 		retrievalChunks,
 	}) => {
-		if (iteration > 1 && citations.length > 0) {
-			return {
-				type: "stop",
-				reason: "enough-evidence",
-			};
-		}
-
 		return chat({
 			adapter: openaiText(model),
 			outputSchema: evidenceActionSchema,
