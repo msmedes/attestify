@@ -47,6 +47,14 @@ export const evidenceActionSchema = z.discriminatedUnion("type", [
 
 export type EvidenceAction = z.infer<typeof evidenceActionSchema>;
 
+export const evidencePlannerOutputSchema = z.object({
+	type: z.enum(["search", "extract", "inspect", "stop"]),
+	queries: z.array(z.string()).max(5).nullable(),
+	exactPhrases: z.array(z.string()).max(6).nullable(),
+	spanIds: z.array(z.string()).max(5).nullable(),
+	reason: z.enum(["enough-evidence", "insufficient-evidence"]).nullable(),
+});
+
 export type EvidenceLoopBudgets = typeof DEFAULT_BUDGETS;
 
 export type EvidenceLoopPlannerInput = {
@@ -174,7 +182,9 @@ export async function runEvidenceLoop({
 			break;
 		}
 
-		const parsedAction = evidenceActionSchema.safeParse(requestedAction);
+		const parsedAction = evidenceActionSchema.safeParse(
+			compactPlannerAction(requestedAction),
+		);
 		if (!parsedAction.success) {
 			stopReason = "invalid-action";
 			iterations.push({
@@ -606,6 +616,20 @@ function currentBudgetUsage({
 		inspectedSpans: inspectedSpans ?? 0,
 		elapsedMs: elapsedMs(startedAt),
 	};
+}
+
+function compactPlannerAction(action: unknown): unknown {
+	if (!isRecord(action)) {
+		return action;
+	}
+
+	return Object.fromEntries(
+		Object.entries(action).filter(([, value]) => value !== null),
+	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isBudgetExhausted(

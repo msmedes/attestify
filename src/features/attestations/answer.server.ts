@@ -10,7 +10,7 @@ import { tokenize } from "./embed";
 import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
 import {
 	type EvidenceLoopPlanner,
-	evidenceActionSchema,
+	evidencePlannerOutputSchema,
 	runEvidenceLoop,
 } from "./evidence-loop";
 import { tryRecordQueryRun } from "./history.server";
@@ -411,12 +411,13 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 	}) => {
 		return chat({
 			adapter: openaiText(model),
-			outputSchema: evidenceActionSchema,
+			outputSchema: evidencePlannerOutputSchema,
 			systemPrompts: [
 				[
 					"You drive a bounded source-evidence loop.",
 					"You may request one typed action: search, inspect, extract, or stop.",
 					"Do not answer the user question.",
+					"For fields that do not apply to the selected action type, return null.",
 					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
 					"After a search, inspect only promising span IDs when seeing the full span text could help choose a narrower follow-up search.",
 					"Request extract only for retrieved or inspected span IDs where host-verified promotion could improve citation candidates.",

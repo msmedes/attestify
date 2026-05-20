@@ -46,6 +46,42 @@ describe("runEvidenceLoop", () => {
 		});
 	});
 
+	it("accepts OpenAI-compatible planner outputs with null fields", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{
+					type: "search",
+					queries: ["mousetrap Hamlet"],
+					exactPhrases: null,
+					spanIds: null,
+					reason: null,
+				},
+				{
+					type: "stop",
+					queries: null,
+					exactPhrases: null,
+					spanIds: null,
+					reason: "enough-evidence",
+				},
+			]),
+			query: "What is the mousetrap in Hamlet?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 1, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.status).toBe("ready");
+		expect(result.traceStep.output.stopReason).toBe("enough-evidence");
+		expect(result.traceStep.output.iterations[0]).toMatchObject({
+			validatedAction: {
+				type: "search",
+				queries: ["mousetrap Hamlet"],
+				exactPhrases: [],
+			},
+		});
+	});
+
 	it("exhausts iteration budget explicitly", async () => {
 		const result = await runEvidenceLoop({
 			budgets: {
