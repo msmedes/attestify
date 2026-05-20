@@ -1,16 +1,12 @@
 import { chat } from "@tanstack/ai";
-import {
-	OPENAI_CHAT_MODELS,
-	type OpenAIChatModel,
-	openaiText,
-} from "@tanstack/ai-openai";
+import { openaiText } from "@tanstack/ai-openai";
 import { z } from "zod";
 import {
 	claimsSafeForAnswerSegments,
 	verifyAnswerClaims,
 } from "./claim-verification";
 import { tokenize } from "./embed";
-import { getOpenAiUnavailableReason } from "./env.server";
+import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
 import { tryRecordQueryRun } from "./history.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
@@ -20,6 +16,7 @@ import type {
 	AiTraceTiming,
 	AiTraceTimingSpan,
 	CitationUnit,
+	QueryMode,
 	SearchResponse,
 } from "./types";
 
@@ -40,6 +37,14 @@ type RetrievalPlan = {
 	traceStep: AiTraceStep;
 };
 
+type AgenticRetrievalPlan = {
+	exactPhrases: string[];
+	searchQueries: string[];
+	rationale: string;
+	error?: string;
+	traceStep: AiTraceStep;
+};
+
 type GeneratedAnswer = {
 	answer: AiAnswer;
 	traceSteps: AiTraceStep[];
@@ -52,6 +57,12 @@ type RerankedCitations = {
 
 const retrievalPlanSchema = z.object({
 	queries: z.array(z.string()).min(1).max(5),
+});
+
+const agenticRetrievalPlanSchema = z.object({
+	exactPhrases: z.array(z.string()).max(6),
+	searchQueries: z.array(z.string()).min(1).max(5),
+	rationale: z.string(),
 });
 
 const rerankSchema = z.object({
@@ -80,7 +91,10 @@ const aiAnswerSchema = z.object({
 
 type ModelClaim = z.infer<typeof aiAnswerSchema>["claims"][number];
 
-export async function answerCorpus(query: string): Promise<SearchResponse> {
+export async function answerCorpus(
+	query: string,
+	queryMode: QueryMode = "hybrid",
+): Promise<SearchResponse> {
 	const startedAt = performance.now();
 	const traceSteps: AiTraceStep[] = [];
 	const openAiUnavailableReason = getOpenAiUnavailableReason();
@@ -88,6 +102,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 	if (openAiUnavailableReason) {
 		const search = await searchCorpusWithQueries({
 			query,
+			queryMode,
 			retrievalQueries: [query],
 		});
 		if (search.aiTrace) {
@@ -112,11 +127,20 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 		return response;
 	}
 
-	const retrievalPlan = await generateRetrievalPlan(query);
+	const retrievalPlan =
+		queryMode === "agentic"
+			? await generateAgenticRetrievalPlan(query)
+			: await generateRetrievalPlan(query);
 	traceSteps.push(retrievalPlan.traceStep);
 	const search = await searchCorpusWithQueries({
 		query,
-		retrievalQueries: retrievalPlan.queries,
+		queryMode,
+		retrievalQueries:
+			queryMode === "agentic"
+				? retrievalPlan.searchQueries
+				: retrievalPlan.queries,
+		exactPhrases:
+			queryMode === "agentic" ? retrievalPlan.exactPhrases : undefined,
 		chunkLimit: 40,
 		citationLimit: 30,
 		citationScoreFloor: 0,
@@ -156,7 +180,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 }
 
 async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
-	const model = getOpenAIModel();
+	const model = serverEnv.openAi.model;
 	const startedAt = performance.now();
 
 	try {
@@ -221,6 +245,77 @@ async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
 	}
 }
 
+async function generateAgenticRetrievalPlan(
+	query: string,
+): Promise<AgenticRetrievalPlan> {
+	const model = serverEnv.openAi.model;
+	const startedAt = performance.now();
+	const fallback = {
+		exactPhrases: extractQuotedPhrases(query),
+		searchQueries: [query],
+		rationale: "Fallback to the user query because agentic planning failed.",
+	};
+
+	try {
+		const plan = await chat({
+			adapter: openaiText(model),
+			outputSchema: agenticRetrievalPlanSchema,
+			systemPrompts: [
+				[
+					"You plan a bounded corpus search.",
+					"Do not answer the question.",
+					"Prefer exact phrase probes for named phrases, quoted terms, titles, objects, and unusual wording.",
+					"Use search queries only for semantic context after exact phrase probes.",
+					"Avoid broad thematic expansions unless the user asks for themes.",
+					"Return at most 6 exact phrases and 3 to 5 search queries.",
+				].join(" "),
+			],
+			messages: [
+				{
+					role: "user",
+					content: query,
+				},
+			],
+		});
+		const output = normalizeAgenticPlan(query, plan);
+		const traceStep: AiTraceStep = {
+			stage: "agentic-retrieval",
+			status: "ready",
+			model,
+			durationMs: elapsedMs(startedAt),
+			input: { query },
+			output,
+		};
+		logTraceStep(traceStep);
+
+		return {
+			...output,
+			traceStep,
+		};
+	} catch (error) {
+		const output = normalizeAgenticPlan(query, fallback);
+		const message =
+			error instanceof Error
+				? `Agentic retrieval planning failed: ${error.message}`
+				: "Agentic retrieval planning failed.";
+		const traceStep: AiTraceStep = {
+			stage: "agentic-retrieval",
+			status: "failed",
+			model,
+			durationMs: elapsedMs(startedAt),
+			input: { query },
+			error: message,
+			output,
+		};
+		logTraceStep(traceStep);
+
+		return {
+			...output,
+			traceStep,
+		};
+	}
+}
+
 function normalizePlanQueries(
 	originalQuery: string,
 	queries: string[],
@@ -241,6 +336,53 @@ function normalizePlanQueries(
 	}
 
 	return normalized.slice(0, 6);
+}
+
+function normalizeAgenticPlan(
+	originalQuery: string,
+	plan: {
+		exactPhrases: string[];
+		searchQueries: string[];
+		rationale: string;
+	},
+): {
+	exactPhrases: string[];
+	searchQueries: string[];
+	rationale: string;
+} {
+	return {
+		exactPhrases: normalizeExactPhrases([
+			...extractQuotedPhrases(originalQuery),
+			...plan.exactPhrases,
+		]),
+		searchQueries: normalizePlanQueries(originalQuery, plan.searchQueries),
+		rationale: plan.rationale.replace(/\s+/g, " ").trim().slice(0, 500),
+	};
+}
+
+function normalizeExactPhrases(phrases: string[]): string[] {
+	const seen = new Set<string>();
+	const normalized = [];
+
+	for (const phrase of phrases) {
+		const compact = phrase.replace(/\s+/g, " ").trim();
+		const key = compact.toLowerCase();
+
+		if (compact.length < 3 || seen.has(key)) {
+			continue;
+		}
+
+		seen.add(key);
+		normalized.push(compact.slice(0, 120));
+	}
+
+	return normalized.slice(0, 6);
+}
+
+function extractQuotedPhrases(query: string): string[] {
+	return [...query.matchAll(/["“”']([^"“”']{3,120})["“”']/g)].map((match) =>
+		(match[1] ?? "").trim(),
+	);
 }
 
 async function generateAiAnswer(
@@ -277,7 +419,7 @@ async function generateAiAnswer(
 		quote: citation.attestation.anchorText,
 		spanText: citation.span.text,
 	}));
-	const model = getOpenAIModel();
+	const model = serverEnv.openAi.model;
 	let modelAnswer: z.infer<typeof aiAnswerSchema>;
 	const startedAt = performance.now();
 
@@ -397,7 +539,7 @@ async function rerankCitations(
 	query: string,
 	citations: CitationUnit[],
 ): Promise<RerankedCitations> {
-	const model = getOpenAIModel();
+	const model = serverEnv.openAi.model;
 	const startedAt = performance.now();
 	const citationHandles = citations.map((citation) => citation.citationHandle);
 	const evidencePreview = citations.map((citation, index) => ({
@@ -490,11 +632,16 @@ async function rerankCitations(
 		};
 		logTraceStep(traceStep);
 
+		const citationsByHandle = new Map(
+			citations.map((citation) => [citation.citationHandle, citation]),
+		);
+
 		return {
-			citations: citationsByHandles(
-				citations,
-				selected.map((item) => item.citationHandle),
-			),
+			citations: selected.flatMap((item) => {
+				const citation = citationsByHandle.get(item.citationHandle);
+
+				return citation ? [citation] : [];
+			}),
 			traceStep,
 		};
 	} catch (error) {
@@ -590,21 +737,6 @@ function normalizeRerankSelection({
 	}));
 }
 
-function citationsByHandles(
-	citations: CitationUnit[],
-	handles: string[],
-): CitationUnit[] {
-	const byHandle = new Map(
-		citations.map((citation) => [citation.citationHandle, citation]),
-	);
-
-	return handles.flatMap((handle) => {
-		const citation = byHandle.get(handle);
-
-		return citation ? [citation] : [];
-	});
-}
-
 function directQueryCitationScore(
 	query: string,
 	citation: CitationUnit,
@@ -673,20 +805,6 @@ function traceStepTimingSpans(step: AiTraceStep): AiTraceTimingSpan[] {
 	}
 
 	return [];
-}
-
-function getOpenAIModel(): OpenAIChatModel {
-	const configuredModel = process.env.OPENAI_MODEL ?? "gpt-5.4-nano";
-
-	if (isOpenAIChatModel(configuredModel)) {
-		return configuredModel;
-	}
-
-	throw new Error(`OPENAI_MODEL is not supported: ${configuredModel}`);
-}
-
-function isOpenAIChatModel(model: string): model is OpenAIChatModel {
-	return (OPENAI_CHAT_MODELS as readonly string[]).includes(model);
 }
 
 function logTraceStep(step: AiTraceStep) {

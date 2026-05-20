@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { citationDiagnosticState } from "../../citation-state";
 import type { CitationUnit } from "../../types";
+import { citationElementId } from "./citation-dom";
 
 type CitationCardProps = {
 	citation: CitationUnit;
@@ -97,10 +98,6 @@ export function CitationCard({ citation }: CitationCardProps) {
 			</div>
 		</article>
 	);
-}
-
-function citationElementId(citationHandle: string): string {
-	return `citation-${citationHandle.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function cardBorderClass(status: "resolved" | "stale" | "unresolved"): string {

@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
 import { embedText as embedLocalText } from "./embed";
-import { getOpenAiUnavailableReason, loadServerEnv } from "./env.server";
+import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
 
 type EmbeddingProvider = "local-hash" | "openai";
 
@@ -15,17 +14,13 @@ export type EmbeddingConfig = {
 
 const LOCAL_MODEL = "local-token-hash-v1";
 const LOCAL_DIMENSIONS = 128;
-const DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
-const DEFAULT_OPENAI_EMBEDDING_DIMENSIONS = 1024;
 const OPENAI_EMBEDDING_BATCH_SIZE = 128;
 
 export function getEmbeddingConfig(): EmbeddingConfig {
-	loadServerEnv();
-
 	if (
-		process.env.NODE_ENV === "test" ||
+		serverEnv.nodeEnv === "test" ||
 		getOpenAiUnavailableReason() ||
-		process.env.OPENAI_EMBEDDINGS === "false"
+		!serverEnv.openAi.embeddingsEnabled
 	) {
 		return {
 			provider: "local-hash",
@@ -36,10 +31,8 @@ export function getEmbeddingConfig(): EmbeddingConfig {
 
 	return {
 		provider: "openai",
-		model: process.env.OPENAI_EMBEDDING_MODEL || DEFAULT_OPENAI_EMBEDDING_MODEL,
-		dimensions: parseEmbeddingDimensions(
-			process.env.OPENAI_EMBEDDING_DIMENSIONS,
-		),
+		model: serverEnv.openAi.embeddingModel,
+		dimensions: serverEnv.openAi.embeddingDimensions,
 	};
 }
 
@@ -111,20 +104,6 @@ export async function embedCorpusTexts({
 	return embeddings;
 }
 
-function parseEmbeddingDimensions(value: string | undefined): number {
-	if (!value) {
-		return DEFAULT_OPENAI_EMBEDDING_DIMENSIONS;
-	}
-
-	const dimensions = Number.parseInt(value, 10);
-
-	if (!Number.isFinite(dimensions) || dimensions < 1) {
-		return DEFAULT_OPENAI_EMBEDDING_DIMENSIONS;
-	}
-
-	return dimensions;
-}
-
 async function embedOpenAiTexts({
 	config,
 	texts,
@@ -135,7 +114,7 @@ async function embedOpenAiTexts({
 	const response = await fetch("https://api.openai.com/v1/embeddings", {
 		method: "POST",
 		headers: {
-			authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+			authorization: `Bearer ${serverEnv.openAi.apiKey}`,
 			"content-type": "application/json",
 		},
 		body: JSON.stringify({

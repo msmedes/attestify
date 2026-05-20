@@ -1,23 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import {
+	BadSearchRequestError,
 	parseSearchRequest,
-	searchRequestErrorResponse,
 } from "#/features/attestations/request";
 
 export const Route = createFileRoute("/api/answer")({
 	server: {
 		handlers: {
 			POST: async ({ request }) => {
-				let query: string;
+				let searchRequest: Awaited<ReturnType<typeof parseSearchRequest>>;
 
 				try {
-					query = (await parseSearchRequest(request)).query;
+					searchRequest = await parseSearchRequest(request);
 				} catch (error) {
-					const response = searchRequestErrorResponse(error);
-
-					if (response) {
-						return response;
+					if (error instanceof BadSearchRequestError) {
+						return Response.json(
+							{ error: error.message },
+							{ status: error.status },
+						);
 					}
 
 					throw error;
@@ -27,7 +28,9 @@ export const Route = createFileRoute("/api/answer")({
 					"#/features/attestations/answer.server"
 				);
 
-				return json(await answerCorpus(query));
+				return json(
+					await answerCorpus(searchRequest.query, searchRequest.queryMode),
+				);
 			},
 		},
 	},

@@ -6,7 +6,7 @@ import {
 	type JudgeContext,
 } from "vitest-evals";
 import { answerCorpus } from "./answer.server";
-import { loadServerEnv } from "./env.server";
+import { serverEnv } from "./env.server";
 
 type AnswerEvalInput = {
 	name: string;
@@ -26,8 +26,6 @@ type AnswerEvalOutput = {
 	}>;
 	traceStages: string[];
 };
-
-loadServerEnv();
 
 const answerHarness = createHarness<AnswerEvalInput, AnswerEvalOutput>({
 	name: "attestify-answer",
@@ -110,7 +108,7 @@ describeEval(
 		harness: answerHarness,
 		judges: [GroundedAnswerJudge],
 		judgeThreshold: 0.8,
-		skipIf: () => !process.env.OPENAI_API_KEY,
+		skipIf: () => !serverEnv.openAi.apiKey,
 	},
 	(it) => {
 		it.for([

@@ -5,6 +5,7 @@ import process from "node:process";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
+import { z } from "zod";
 import { citationLabel } from "./citation-identity";
 import { queryRuns } from "./history.schema";
 import type {
@@ -18,6 +19,7 @@ import type {
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATABASE_PATH = path.join(DATA_DIR, "attestify.sqlite");
+const persistedHistoryArraySchema = z.array(z.unknown());
 
 let sqlite: Database.Database | null = null;
 
@@ -141,6 +143,7 @@ export function upgradePersistedSearchResponse(value: unknown): SearchResponse {
 
 	return {
 		...response,
+		queryMode: response.queryMode ?? "hybrid",
 		citations: (response.citations ?? []).map((citation, index) =>
 			upgradePersistedCitation(citation, index),
 		),
@@ -163,28 +166,18 @@ function upgradePersistedCitation(
 			legacyAttestationId: citation.attestation.id,
 		},
 	};
+	const historyEvidence =
+		citation.historyEvidence ??
+		buildPersistedEvidence(citation, citationIdentity);
 
 	return {
 		...citation,
 		citationIdentity,
 		citationLabel: citation.citationLabel || citationLabel(index),
-		historyEvidence: markSavedHistoryEvidence(
-			citation.historyEvidence ??
-				buildPersistedEvidence(citation, citationIdentity),
-		),
-	};
-}
-
-function markSavedHistoryEvidence(
-	historyEvidence: CitationUnit["historyEvidence"],
-): CitationUnit["historyEvidence"] {
-	if (historyEvidence?.status !== "persisted") {
-		return historyEvidence;
-	}
-
-	return {
-		...historyEvidence,
-		context: "saved-history",
+		historyEvidence:
+			historyEvidence.status === "persisted"
+				? { ...historyEvidence, context: "saved-history" }
+				: historyEvidence,
 	};
 }
 
@@ -221,61 +214,46 @@ function buildPersistedEvidence(
 type QueryRunRow = typeof queryRuns.$inferSelect;
 
 function summarizeRun(run: QueryRunRow): QueryRunSummary {
-	const citations = parseHistoryArray(run.citationsJson);
-	const retrievalQueries = parseHistoryArray(run.retrievalQueriesJson);
+	const citations = persistedHistoryArraySchema.parse(
+		parseHistoryJson(run.citationsJson),
+	);
+	const retrievalQueries = persistedHistoryArraySchema.parse(
+		parseHistoryJson(run.retrievalQueriesJson),
+	);
 	const response = parseHistoryJson(run.responseJson) as SearchResponse;
-
-	return {
-		id: run.id,
-		createdAt: run.createdAt.toISOString(),
-		query: run.query,
-		answerStatus: run.answerStatus,
-		answerText: run.answerText,
-		citationCount: citations.length,
-		retrievalQueryCount: retrievalQueries.length,
-		...optionalClaimVerificationSummary(response),
-	};
-}
-
-function optionalClaimVerificationSummary(response: SearchResponse): {
-	claimVerification?: ClaimVerificationSummary;
-} {
 	const claims =
 		response.aiAnswer?.status === "ready"
 			? (response.aiAnswer.claims ?? [])
 			: [];
 
-	if (claims.length === 0) {
-		return {};
-	}
-
 	return {
-		claimVerification: claims.reduce(
-			(summary, claim) => {
-				summary.total += 1;
-				summary[claim.verification.status] += 1;
+		id: run.id,
+		createdAt: run.createdAt.toISOString(),
+		query: run.query,
+		queryMode: response.queryMode ?? "hybrid",
+		answerStatus: run.answerStatus,
+		answerText: run.answerText,
+		citationCount: citations.length,
+		retrievalQueryCount: retrievalQueries.length,
+		claimVerification:
+			claims.length > 0
+				? claims.reduce(
+						(summary, claim) => {
+							summary.total += 1;
+							summary[claim.verification.status] += 1;
 
-				return summary;
-			},
-			{
-				total: 0,
-				supported: 0,
-				weak: 0,
-				contradicted: 0,
-				missing: 0,
-			} satisfies ClaimVerificationSummary,
-		),
+							return summary;
+						},
+						{
+							total: 0,
+							supported: 0,
+							weak: 0,
+							contradicted: 0,
+							missing: 0,
+						} satisfies ClaimVerificationSummary,
+					)
+				: undefined,
 	};
-}
-
-function parseHistoryArray(json: string): unknown[] {
-	const value = parseHistoryJson(json);
-
-	if (!Array.isArray(value)) {
-		throw new Error("Expected persisted history JSON to be an array.");
-	}
-
-	return value;
 }
 
 function parseHistoryJson(json: string): unknown {

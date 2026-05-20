@@ -5,6 +5,7 @@ import {
 	useQueryHistoryRun,
 	useSearchAttestations,
 } from "../queries";
+import type { QueryMode } from "../types";
 import { AnswerPanel } from "./internal/AnswerPanel";
 import { CorpusBrowser, type CorpusView } from "./internal/CorpusBrowser";
 import { CorpusSidebar } from "./internal/CorpusSidebar";
@@ -23,6 +24,7 @@ const sampleQueries = [
 
 export function AttestationLab() {
 	const [query, setQuery] = useState(sampleQueries[0]);
+	const [queryMode, setQueryMode] = useState<QueryMode>("hybrid");
 	const [corpusView, setCorpusView] = useState<CorpusView | null>(null);
 	const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<
 		string | null
@@ -52,7 +54,7 @@ export function AttestationLab() {
 
 		setSelectedHistoryRunId(null);
 		search.reset();
-		search.mutate({ query: trimmedQuery });
+		search.mutate({ query: trimmedQuery, queryMode });
 	}
 
 	return (
@@ -97,12 +99,19 @@ export function AttestationLab() {
 					</header>
 
 					<div className="border-[#20211f] border-b bg-[#ffffff] px-5 py-4 md:px-8">
-						<SearchBar
-							isPending={search.isPending}
-							onQueryChanged={setQuery}
-							onSubmitted={submitQuery}
-							query={query}
-						/>
+						<div className="grid gap-3">
+							<QueryModeSelector
+								isDisabled={search.isPending}
+								onModeChanged={setQueryMode}
+								queryMode={queryMode}
+							/>
+							<SearchBar
+								isPending={search.isPending}
+								onQueryChanged={setQuery}
+								onSubmitted={submitQuery}
+								query={query}
+							/>
+						</div>
 					</div>
 
 					<div className="grid flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -164,6 +173,7 @@ export function AttestationLab() {
 								isLoading={history.isLoading}
 								onRunSelected={(run) => {
 									setQuery(run.query);
+									setQueryMode(run.queryMode);
 									setSelectedHistoryRunId(run.id);
 								}}
 								runs={history.data ?? []}
@@ -175,5 +185,55 @@ export function AttestationLab() {
 				</section>
 			</div>
 		</main>
+	);
+}
+
+function QueryModeSelector({
+	isDisabled,
+	onModeChanged,
+	queryMode,
+}: {
+	isDisabled: boolean;
+	onModeChanged: (mode: QueryMode) => void;
+	queryMode: QueryMode;
+}) {
+	const modes: Array<{
+		label: string;
+		mode: QueryMode;
+		description: string;
+	}> = [
+		{
+			label: "Hybrid",
+			mode: "hybrid",
+			description: "expanded queries plus lexical/vector ranking",
+		},
+		{
+			label: "Agentic",
+			mode: "agentic",
+			description: "model-planned exact phrase probes plus search queries",
+		},
+	];
+
+	return (
+		<div className="flex flex-wrap items-center gap-2 text-sm">
+			<span className="text-[#6f716d]">query mode</span>
+			{modes.map((item) => (
+				<button
+					aria-pressed={queryMode === item.mode}
+					className={`min-h-9 border border-[#20211f] px-3 transition-colors transition-transform active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-2 disabled:opacity-60 ${
+						queryMode === item.mode
+							? "bg-[#20211f] text-[#ffffff]"
+							: "bg-[#ffffff] text-[#20211f] hover:bg-[#d8eee7]"
+					}`}
+					disabled={isDisabled}
+					key={item.mode}
+					onClick={() => onModeChanged(item.mode)}
+					title={item.description}
+					type="button"
+				>
+					{item.label}
+				</button>
+			))}
+		</div>
 	);
 }

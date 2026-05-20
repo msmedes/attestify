@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as QueriesRunIdRouteImport } from './routes/queries.$runId'
 import { Route as ApiSearchRouteImport } from './routes/api/search'
 import { Route as ApiHistoryRouteImport } from './routes/api/history'
 import { Route as ApiCorpusRouteImport } from './routes/api/corpus'
@@ -19,6 +20,11 @@ import { Route as ApiHistoryRunIdRouteImport } from './routes/api/history.$runId
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QueriesRunIdRoute = QueriesRunIdRouteImport.update({
+  id: '/queries/$runId',
+  path: '/queries/$runId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSearchRoute = ApiSearchRouteImport.update({
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/api/corpus': typeof ApiCorpusRoute
   '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/queries/$runId': typeof QueriesRunIdRoute
   '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +68,7 @@ export interface FileRoutesByTo {
   '/api/corpus': typeof ApiCorpusRoute
   '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/queries/$runId': typeof QueriesRunIdRoute
   '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRoutesById {
@@ -70,6 +78,7 @@ export interface FileRoutesById {
   '/api/corpus': typeof ApiCorpusRoute
   '/api/history': typeof ApiHistoryRouteWithChildren
   '/api/search': typeof ApiSearchRoute
+  '/queries/$runId': typeof QueriesRunIdRoute
   '/api/history/$runId': typeof ApiHistoryRunIdRoute
 }
 export interface FileRouteTypes {
@@ -80,6 +89,7 @@ export interface FileRouteTypes {
     | '/api/corpus'
     | '/api/history'
     | '/api/search'
+    | '/queries/$runId'
     | '/api/history/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -88,6 +98,7 @@ export interface FileRouteTypes {
     | '/api/corpus'
     | '/api/history'
     | '/api/search'
+    | '/queries/$runId'
     | '/api/history/$runId'
   id:
     | '__root__'
@@ -96,6 +107,7 @@ export interface FileRouteTypes {
     | '/api/corpus'
     | '/api/history'
     | '/api/search'
+    | '/queries/$runId'
     | '/api/history/$runId'
   fileRoutesById: FileRoutesById
 }
@@ -105,6 +117,7 @@ export interface RootRouteChildren {
   ApiCorpusRoute: typeof ApiCorpusRoute
   ApiHistoryRoute: typeof ApiHistoryRouteWithChildren
   ApiSearchRoute: typeof ApiSearchRoute
+  QueriesRunIdRoute: typeof QueriesRunIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -114,6 +127,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/queries/$runId': {
+      id: '/queries/$runId'
+      path: '/queries/$runId'
+      fullPath: '/queries/$runId'
+      preLoaderRoute: typeof QueriesRunIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/search': {
@@ -172,6 +192,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCorpusRoute: ApiCorpusRoute,
   ApiHistoryRoute: ApiHistoryRouteWithChildren,
   ApiSearchRoute: ApiSearchRoute,
+  QueriesRunIdRoute: QueriesRunIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

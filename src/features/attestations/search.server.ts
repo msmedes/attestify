@@ -32,7 +32,9 @@ import type {
 	Attestation,
 	CitationUnit,
 	LazyExpansionTraceStep,
+	QueryMode,
 	RetrievalChunk,
+	RetrievalDiagnosticRow,
 	SearchResponse,
 	SourceDocument,
 	SourceKind,
@@ -76,6 +78,8 @@ const defaultLazyExpansionCache = new InMemoryExtractionCache();
 type SearchCorpusWithQueriesOptions = {
 	query: string;
 	retrievalQueries: string[];
+	queryMode?: QueryMode;
+	exactPhrases?: string[];
 	chunkLimit?: number;
 	citationLimit?: number;
 	citationScoreFloor?: number;
@@ -92,9 +96,13 @@ export type LazyExpansionOptions = {
 	verifiedAt?: string;
 };
 
-export async function searchCorpus(query: string): Promise<SearchResponse> {
+export async function searchCorpus(
+	query: string,
+	queryMode: QueryMode = "hybrid",
+): Promise<SearchResponse> {
 	return searchCorpusWithQueries({
 		query,
+		queryMode,
 		retrievalQueries: [query],
 	});
 }
@@ -106,6 +114,8 @@ export async function populateSearchIndex() {
 export async function searchCorpusWithQueries({
 	query,
 	retrievalQueries,
+	queryMode = "hybrid",
+	exactPhrases = [],
 	chunkLimit = DEFAULT_CHUNK_LIMIT,
 	citationLimit = DEFAULT_CITATION_LIMIT,
 	citationScoreFloor = MIN_CITATION_SCORE,
@@ -129,6 +139,7 @@ export async function searchCorpusWithQueries({
 	]);
 	const embeddingConfig = getEmbeddingConfig();
 	const scoringQuery = normalizedRetrievalQueries.join(" ");
+	const normalizedExactPhrases = normalizeExactPhrases(exactPhrases);
 	timingSpans.push({
 		stage: "retrieval",
 		label: "normalize-retrieval-queries",
@@ -143,6 +154,7 @@ export async function searchCorpusWithQueries({
 	);
 	timingSpans.push(...vectorResult.timingSpans);
 	const vectorScores = vectorResult.scores;
+	const vectorMatches = vectorResult.matches;
 	const rankStartedAt = performance.now();
 	const retrievalChunks = listSpans()
 		.flatMap((span) => {
@@ -158,7 +170,15 @@ export async function searchCorpusWithQueries({
 				),
 			);
 			const vectorScore = vectorScores.get(span.spanId) ?? 0;
-			const score = lexicalScore * 0.75 + vectorScore * 0.25;
+			const exactPhraseScore = exactPhraseMatchScore(
+				normalizedExactPhrases,
+				span,
+				source.title,
+			);
+			const score =
+				queryMode === "agentic"
+					? lexicalScore * 0.5 + vectorScore * 0.2 + exactPhraseScore * 0.3
+					: lexicalScore * 0.75 + vectorScore * 0.25;
 
 			if (score <= 0) {
 				return [];
@@ -179,6 +199,18 @@ export async function searchCorpusWithQueries({
 		})
 		.sort((left, right) => right.score - left.score)
 		.slice(0, chunkLimit);
+	const retrievalDiagnostics = {
+		rows: retrievalChunks.map((chunk, index) =>
+			buildRetrievalDiagnosticRow({
+				chunk,
+				index,
+				queries: normalizedRetrievalQueries,
+				exactPhrases: normalizedExactPhrases,
+				vectorMatches,
+				vectorScores,
+			}),
+		),
+	};
 	timingSpans.push({
 		stage: "retrieval",
 		label: "lexical-vector-rank-spans",
@@ -270,7 +302,9 @@ export async function searchCorpusWithQueries({
 
 	return {
 		query,
+		queryMode,
 		retrievalQueries: normalizedRetrievalQueries,
+		retrievalDiagnostics,
 		aiTrace: {
 			steps: lazyExpansionResult
 				? [retrievalTraceStep, lazyExpansionResult.traceStep]
@@ -521,9 +555,11 @@ async function queryVectorScores(
 	embeddingConfig: EmbeddingConfig,
 ): Promise<{
 	scores: Map<string, number>;
+	matches: Map<string, Map<string, number>>;
 	timingSpans: AiTraceTimingSpan[];
 }> {
 	const vectorScores = new Map<string, number>();
+	const vectorMatches = new Map<string, Map<string, number>>();
 	const timingSpans: AiTraceTimingSpan[] = [];
 
 	for (const query of queries) {
@@ -555,6 +591,14 @@ async function queryVectorScores(
 		for (const result of results) {
 			const spanId = result.item.metadata.spanId;
 			const currentScore = vectorScores.get(spanId) ?? 0;
+			const queryMatches =
+				vectorMatches.get(spanId) ?? new Map<string, number>();
+			const currentQueryScore = queryMatches.get(query) ?? 0;
+
+			if (result.score > currentQueryScore) {
+				queryMatches.set(query, result.score);
+				vectorMatches.set(spanId, queryMatches);
+			}
 
 			if (result.score > currentScore) {
 				vectorScores.set(spanId, result.score);
@@ -563,6 +607,7 @@ async function queryVectorScores(
 	}
 
 	return {
+		matches: vectorMatches,
 		scores: vectorScores,
 		timingSpans,
 	};
@@ -585,6 +630,58 @@ function normalizeRetrievalQueries(queries: string[]): string[] {
 	}
 
 	return normalized.slice(0, 6);
+}
+
+function normalizeExactPhrases(phrases: string[]): string[] {
+	const seen = new Set<string>();
+	const normalized = [];
+
+	for (const phrase of phrases) {
+		const compact = phrase.replace(/\s+/g, " ").trim();
+		const key = compact.toLowerCase();
+
+		if (compact.length < 3 || seen.has(key)) {
+			continue;
+		}
+
+		seen.add(key);
+		normalized.push(compact.slice(0, 120));
+	}
+
+	return normalized.slice(0, 6);
+}
+
+function exactPhraseMatchScore(
+	phrases: string[],
+	span: SourceSpan,
+	sourceTitle: string,
+): number {
+	return phrases.some((phrase) =>
+		spanExactPhraseMatch(phrase, span, sourceTitle),
+	)
+		? 1
+		: 0;
+}
+
+function spanExactPhraseMatch(
+	phrase: string,
+	span: SourceSpan,
+	sourceTitle: string,
+): boolean {
+	return normalizeForMatch(
+		[
+			sourceTitle,
+			span.section,
+			span.locator,
+			span.text,
+			...span.attestations.flatMap((attestation) => [
+				attestation.subject,
+				attestation.predicate,
+				attestation.value,
+				attestation.anchorText,
+			]),
+		].join(" "),
+	).includes(normalizeForMatch(phrase));
 }
 
 function selectCitationUnits(
@@ -627,6 +724,75 @@ function selectCitationUnits(
 	return selected.length > 0
 		? selected
 		: candidatePool.slice(0, Math.min(2, candidatePool.length));
+}
+
+function buildRetrievalDiagnosticRow({
+	chunk,
+	exactPhrases,
+	index,
+	queries,
+	vectorMatches,
+	vectorScores,
+}: {
+	chunk: RetrievalChunk;
+	exactPhrases: string[];
+	index: number;
+	queries: string[];
+	vectorMatches: Map<string, Map<string, number>>;
+	vectorScores: Map<string, number>;
+}): RetrievalDiagnosticRow {
+	const span = findSpan(chunk.spanId);
+	const source = findSource(chunk.sourceId);
+	const queryScores = queries.map((query) => ({
+		query,
+		lexicalScore:
+			span && source ? spanLexicalScore(query, span, source.title) : 0,
+		vectorScore: vectorMatches.get(chunk.spanId)?.get(query),
+	}));
+	const bestLexical = queryScores.reduce(
+		(best, item) => (item.lexicalScore > best.lexicalScore ? item : best),
+		queryScores[0] ?? { query: "", lexicalScore: 0 },
+	);
+	const vectorEntries = [
+		...(vectorMatches.get(chunk.spanId)?.entries() ?? []),
+	].sort((left, right) => right[1] - left[1]);
+	const exactPhraseMatches =
+		span && source
+			? exactPhrases.filter((phrase) =>
+					spanExactPhraseMatch(phrase, span, source.title),
+				)
+			: [];
+
+	return {
+		rank: index + 1,
+		spanId: chunk.spanId,
+		sourceId: chunk.sourceId,
+		title: chunk.title,
+		section: chunk.section,
+		locator: chunk.locator,
+		finalScore: chunk.score,
+		lexicalScore: roundScore(bestLexical.lexicalScore),
+		vectorScore: roundScore(vectorScores.get(chunk.spanId) ?? 0),
+		exactPhraseScore: exactPhraseMatches.length > 0 ? 1 : 0,
+		bestLexicalQuery: bestLexical.query,
+		bestVectorQuery: vectorEntries[0]?.[0],
+		bestExactPhrase: exactPhraseMatches[0],
+		queryScores: queryScores
+			.map((item) => ({
+				query: item.query,
+				lexicalScore: roundScore(item.lexicalScore),
+				vectorScore:
+					typeof item.vectorScore === "number"
+						? roundScore(item.vectorScore)
+						: undefined,
+			}))
+			.sort(
+				(left, right) =>
+					right.lexicalScore +
+					(right.vectorScore ?? 0) -
+					(left.lexicalScore + (left.vectorScore ?? 0)),
+			),
+	};
 }
 
 async function ensureIndex() {

@@ -16,7 +16,15 @@ describe("parseSearchRequest", () => {
 	it("normalizes valid search queries", async () => {
 		await expect(
 			parseSearchRequest(jsonRequest({ query: "  Hamlet\n mousetrap  " })),
-		).resolves.toEqual({ query: "Hamlet mousetrap" });
+		).resolves.toEqual({ query: "Hamlet mousetrap", queryMode: "hybrid" });
+	});
+
+	it("accepts an agentic query mode", async () => {
+		await expect(
+			parseSearchRequest(
+				jsonRequest({ query: "Hamlet mousetrap", queryMode: "agentic" }),
+			),
+		).resolves.toEqual({ query: "Hamlet mousetrap", queryMode: "agentic" });
 	});
 
 	it("rejects malformed JSON as a bad request", async () => {

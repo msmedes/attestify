@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { SearchRequest } from "./types";
+import { QUERY_MODES } from "./types";
 
 export const MAX_QUERY_LENGTH = 500;
 
@@ -16,6 +17,7 @@ const searchRequestSchema = z.object({
 					`Query must be ${MAX_QUERY_LENGTH} characters or fewer.`,
 				),
 		),
+	queryMode: z.enum(QUERY_MODES).default("hybrid"),
 });
 
 export class BadSearchRequestError extends Error {
@@ -47,19 +49,4 @@ export async function parseSearchRequest(
 	}
 
 	return parsed.data;
-}
-
-export function searchRequestErrorResponse(error: unknown): Response | null {
-	if (!(error instanceof BadSearchRequestError)) {
-		return null;
-	}
-
-	return Response.json(
-		{
-			error: error.message,
-		},
-		{
-			status: error.status,
-		},
-	);
 }

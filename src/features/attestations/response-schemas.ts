@@ -7,29 +7,11 @@ import type {
 	SourceDocument,
 	SourceSpan,
 } from "./types";
+import { ATTESTATION_TYPES, QUERY_MODES, SOURCE_KINDS } from "./types";
 
-const sourceKindSchema = z.enum([
-	"play",
-	"novel",
-	"story-collection",
-	"repair-manual",
-	"espresso-note",
-	"science-note",
-	"meeting-transcript",
-]);
+const sourceKindSchema = z.enum(SOURCE_KINDS);
 
-const attestationTypeSchema = z.enum([
-	"utterance",
-	"quoted_phrase",
-	"passage",
-	"torque_spec",
-	"procedure_step",
-	"safety_warning",
-	"brew_parameter",
-	"adjustment_rule",
-	"causal_claim",
-	"literal_value",
-]);
+const attestationTypeSchema = z.enum(ATTESTATION_TYPES);
 
 const attestationSchema = z.object({
 	id: z.string(),
@@ -157,6 +139,33 @@ const retrievalChunkSchema = z.object({
 	score: z.number(),
 });
 
+const retrievalDiagnosticsSchema = z.object({
+	rows: z.array(
+		z.object({
+			rank: z.number(),
+			spanId: z.string(),
+			sourceId: z.string(),
+			title: z.string(),
+			section: z.string(),
+			locator: z.string(),
+			finalScore: z.number(),
+			lexicalScore: z.number(),
+			vectorScore: z.number(),
+			exactPhraseScore: z.number().optional(),
+			bestLexicalQuery: z.string(),
+			bestVectorQuery: z.string().optional(),
+			bestExactPhrase: z.string().optional(),
+			queryScores: z.array(
+				z.object({
+					query: z.string(),
+					lexicalScore: z.number(),
+					vectorScore: z.number().optional(),
+				}),
+			),
+		}),
+	),
+});
+
 const aiAnswerSchema = z.discriminatedUnion("status", [
 	z.object({
 		status: z.literal("ready"),
@@ -211,16 +220,18 @@ const aiAnswerSchema = z.discriminatedUnion("status", [
 	}),
 ]);
 
-const aiTraceSchema = z.custom<AiTrace>(
-	(value) =>
-		typeof value === "object" &&
-		value !== null &&
-		Array.isArray((value as { steps?: unknown }).steps),
-);
+const aiTraceSchema = z
+	.object({
+		steps: z.array(z.unknown()),
+		timing: z.unknown().optional(),
+	})
+	.passthrough() as z.ZodType<AiTrace>;
 
 export const searchResponseSchema = z.object({
 	query: z.string(),
+	queryMode: z.enum(QUERY_MODES).default("hybrid"),
 	retrievalQueries: z.array(z.string()),
+	retrievalDiagnostics: retrievalDiagnosticsSchema.optional(),
 	aiTrace: aiTraceSchema.optional(),
 	answerLines: z.array(z.string()),
 	aiAnswer: aiAnswerSchema.optional(),
@@ -237,6 +248,7 @@ export const queryRunSummarySchema = z.object({
 	id: z.string(),
 	createdAt: z.string(),
 	query: z.string(),
+	queryMode: z.enum(QUERY_MODES).default("hybrid"),
 	answerStatus: z.string(),
 	answerText: z.string(),
 	citationCount: z.number(),

@@ -14,13 +14,24 @@ import type {
 export async function answerWithAttestations(
 	request: SearchRequest,
 ): Promise<SearchResponse> {
-	return postSearchRequest("/api/answer", request);
-}
+	const response = await fetch("/api/answer", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify(request),
+	});
 
-export async function searchAttestations(
-	request: SearchRequest,
-): Promise<SearchResponse> {
-	return postSearchRequest("/api/search", request);
+	if (!response.ok) {
+		const message = await response.text();
+		throw new Error(message || `Search failed with ${response.status}`);
+	}
+
+	return parseApiResponse(
+		searchResponseSchema,
+		await response.json(),
+		"Search",
+	);
 }
 
 export async function listQueryHistory(): Promise<QueryRunSummary[]> {
@@ -54,29 +65,5 @@ export async function getQueryHistoryRun(id: string): Promise<QueryRunDetail> {
 		queryRunDetailSchema,
 		(body as { run?: unknown }).run,
 		"History run",
-	);
-}
-
-async function postSearchRequest(
-	url: string,
-	request: SearchRequest,
-): Promise<SearchResponse> {
-	const response = await fetch(url, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-		},
-		body: JSON.stringify(request),
-	});
-
-	if (!response.ok) {
-		const message = await response.text();
-		throw new Error(message || `Search failed with ${response.status}`);
-	}
-
-	return parseApiResponse(
-		searchResponseSchema,
-		await response.json(),
-		"Search",
 	);
 }

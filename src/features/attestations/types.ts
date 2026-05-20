@@ -1,23 +1,29 @@
-export type SourceKind =
-	| "play"
-	| "novel"
-	| "story-collection"
-	| "repair-manual"
-	| "espresso-note"
-	| "science-note"
-	| "meeting-transcript";
+export const SOURCE_KINDS = [
+	"play",
+	"novel",
+	"story-collection",
+	"repair-manual",
+	"espresso-note",
+	"science-note",
+	"meeting-transcript",
+] as const;
 
-export type AttestationType =
-	| "utterance"
-	| "quoted_phrase"
-	| "passage"
-	| "torque_spec"
-	| "procedure_step"
-	| "safety_warning"
-	| "brew_parameter"
-	| "adjustment_rule"
-	| "causal_claim"
-	| "literal_value";
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+export const ATTESTATION_TYPES = [
+	"utterance",
+	"quoted_phrase",
+	"passage",
+	"torque_spec",
+	"procedure_step",
+	"safety_warning",
+	"brew_parameter",
+	"adjustment_rule",
+	"causal_claim",
+	"literal_value",
+] as const;
+
+export type AttestationType = (typeof ATTESTATION_TYPES)[number];
 
 export type SourceDocument = {
 	sourceId: string;
@@ -165,9 +171,15 @@ export type RetrievalChunk = {
 	score: number;
 };
 
+export const QUERY_MODES = ["hybrid", "agentic"] as const;
+
+export type QueryMode = (typeof QUERY_MODES)[number];
+
 export type SearchResponse = {
 	query: string;
+	queryMode: QueryMode;
 	retrievalQueries: string[];
+	retrievalDiagnostics?: RetrievalDiagnostics;
 	aiTrace?: AiTrace;
 	answerLines: string[];
 	aiAnswer?: AiAnswer;
@@ -178,6 +190,31 @@ export type SearchResponse = {
 		spans: number;
 		attestations: number;
 	};
+};
+
+export type RetrievalDiagnostics = {
+	rows: RetrievalDiagnosticRow[];
+};
+
+export type RetrievalDiagnosticRow = {
+	rank: number;
+	spanId: string;
+	sourceId: string;
+	title: string;
+	section: string;
+	locator: string;
+	finalScore: number;
+	lexicalScore: number;
+	vectorScore: number;
+	exactPhraseScore?: number;
+	bestLexicalQuery: string;
+	bestVectorQuery?: string;
+	bestExactPhrase?: string;
+	queryScores: Array<{
+		query: string;
+		lexicalScore: number;
+		vectorScore?: number;
+	}>;
 };
 
 export type AiTrace = {
@@ -207,6 +244,7 @@ export type AiTraceStep =
 	| RetrievalTraceStep
 	| LazyExpansionTraceStep
 	| RerankTraceStep
+	| AgenticRetrievalTraceStep
 	| AnswerSynthesisTraceStep
 	| ClaimVerificationTraceStep;
 
@@ -238,6 +276,37 @@ export type RetrievalPlanTraceStep =
 				query: string;
 			};
 			error: string;
+	  };
+
+export type AgenticRetrievalTraceStep =
+	| {
+			stage: "agentic-retrieval";
+			status: "ready";
+			model: string;
+			durationMs: number;
+			input: {
+				query: string;
+			};
+			output: {
+				exactPhrases: string[];
+				searchQueries: string[];
+				rationale: string;
+			};
+	  }
+	| {
+			stage: "agentic-retrieval";
+			status: "failed";
+			model: string;
+			durationMs: number;
+			input: {
+				query: string;
+			};
+			error: string;
+			output: {
+				exactPhrases: string[];
+				searchQueries: string[];
+				rationale: string;
+			};
 	  };
 
 export type RetrievalTraceStep = {
@@ -413,12 +482,14 @@ export type ClaimVerificationTraceStep = {
 
 export type SearchRequest = {
 	query: string;
+	queryMode?: QueryMode;
 };
 
 export type QueryRunSummary = {
 	id: string;
 	createdAt: string;
 	query: string;
+	queryMode: QueryMode;
 	answerStatus: string;
 	answerText: string;
 	citationCount: number;

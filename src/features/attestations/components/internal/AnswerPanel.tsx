@@ -5,6 +5,7 @@ import type {
 	AiTraceStep,
 	AiTraceTimingSpan,
 } from "../../types";
+import { citationElementId } from "./citation-dom";
 
 type AnswerPanelProps = {
 	aiAnswer?: AiAnswer;
@@ -21,16 +22,6 @@ export function AnswerPanel({
 	query,
 	retrievalQueries,
 }: AnswerPanelProps) {
-	const retrievalQueryItems = withOccurrenceKeys(
-		retrievalQueries,
-		(retrievalQuery) => retrievalQuery,
-	);
-	const answerSegmentItems =
-		aiAnswer?.status === "ready"
-			? withOccurrenceKeys(aiAnswer.segments, segmentKeyBase)
-			: [];
-	const lineItems = withOccurrenceKeys(lines, (line) => line);
-
 	return (
 		<section className="border border-[#20211f] bg-[#ffffff]">
 			<div className="flex items-center justify-between border-[#20211f] border-b px-4 py-3">
@@ -51,10 +42,10 @@ export function AnswerPanel({
 				{retrievalQueries.length > 1 ? (
 					<div className="mb-4 flex flex-wrap gap-2 border-[#d7d8d1] border-b pb-4 text-sm leading-5">
 						<span className="text-[#6f716d]">retrieval plan</span>
-						{retrievalQueryItems.map(({ item: retrievalQuery, key }) => (
+						{retrievalQueries.map((retrievalQuery) => (
 							<span
 								className="max-w-full break-words border border-[#c9cac3] bg-[#f4f5ef] px-2 py-1 text-[#20211f]"
-								key={key}
+								key={retrievalQuery}
 							>
 								{retrievalQuery}
 							</span>
@@ -65,14 +56,14 @@ export function AnswerPanel({
 				{aiAnswer?.status === "ready" ? (
 					<>
 						<p className="max-w-[72ch]">
-							{answerSegmentItems.map(({ item: segment, key }) =>
+							{aiAnswer.segments.map((segment) =>
 								segment.type === "text" ? (
-									<span key={key}>{segment.text}</span>
+									<span key={`text:${segment.text}`}>{segment.text}</span>
 								) : (
 									<CitationMarker
 										citedText={segment.text}
 										citationNumber={segment.citationNumber}
-										key={key}
+										key={`citation:${segment.citationHandle}:${segment.citationNumber}:${segment.text ?? ""}`}
 										quote={segment.quote}
 										sourceText={segment.sourceText}
 										title={`${segment.sourceTitle}, ${segment.section}, ${segment.locator}`}
@@ -95,8 +86,8 @@ export function AnswerPanel({
 
 				{!aiAnswer ? (
 					<div className="divide-y divide-[#d7d8d1]">
-						{lineItems.map(({ item: line, key }) => (
-							<p className="py-4" key={key}>
+						{lines.map((line) => (
+							<p className="py-4" key={line}>
 								{line}
 							</p>
 						))}
@@ -109,37 +100,6 @@ export function AnswerPanel({
 	);
 }
 
-function withOccurrenceKeys<T>(
-	items: T[],
-	baseKey: (item: T) => string,
-): Array<{ item: T; key: string }> {
-	const counts = new Map<string, number>();
-
-	return items.map((item) => {
-		const base = baseKey(item);
-		const count = counts.get(base) ?? 0;
-		counts.set(base, count + 1);
-
-		return {
-			item,
-			key: count === 0 ? base : `${base}:${count}`,
-		};
-	});
-}
-
-type ReadyAnswerSegment = Extract<
-	AiAnswer,
-	{ status: "ready" }
->["segments"][number];
-
-function segmentKeyBase(segment: ReadyAnswerSegment): string {
-	if (segment.type === "text") {
-		return `text:${segment.text}`;
-	}
-
-	return `citation:${segment.citationHandle}:${segment.text ?? ""}`;
-}
-
 function AiTracePanel({ trace }: { trace: AiTrace }) {
 	return (
 		<div className="mt-5 border-[#d7d8d1] border-t pt-4 text-sm leading-5">
@@ -147,7 +107,7 @@ function AiTracePanel({ trace }: { trace: AiTrace }) {
 			{trace.timing ? <TraceWaterfall trace={trace} /> : null}
 			<div className="grid gap-2">
 				{trace.steps.map((step, index) => (
-					<TraceStepCard index={index} key={traceStepKey(step)} step={step} />
+					<TraceStepCard index={index} key={JSON.stringify(step)} step={step} />
 				))}
 			</div>
 		</div>
@@ -160,11 +120,6 @@ function TraceWaterfall({ trace }: { trace: AiTrace }) {
 	}
 
 	const spans = trace.timing.spans.filter((span) => span.durationMs >= 0);
-	const spanItems = withOccurrenceKeys(
-		spans,
-		(span) =>
-			`${span.stage}:${span.label}:${span.category}:${span.durationMs}:${span.model ?? ""}:${span.count ?? ""}`,
-	);
 
 	return (
 		<div className="mb-3 border border-[#c9cac3] bg-[#fbfcf7] p-3">
@@ -180,9 +135,9 @@ function TraceWaterfall({ trace }: { trace: AiTrace }) {
 				/>
 			</div>
 			<div className="mt-3 grid gap-2">
-				{spanItems.map(({ item: span, key }) => (
+				{spans.map((span) => (
 					<TraceWaterfallRow
-						key={key}
+						key={`${span.stage}:${span.label}:${span.category}:${span.durationMs}:${span.model ?? ""}:${span.count ?? ""}`}
 						span={span}
 						totalMs={trace.timing?.totalMs ?? 0}
 					/>
@@ -240,20 +195,40 @@ type VerifiedClaim = NonNullable<
 	Extract<AiAnswer, { status: "ready" }>["claims"]
 >[number];
 
-function ClaimVerificationPanel({ claims }: { claims: VerifiedClaim[] }) {
-	const claimItems = withOccurrenceKeys(
-		claims,
-		(claim) => `${claim.text}:${claim.verification.status}`,
-	);
+const claimStatusUi: Record<
+	VerifiedClaim["verification"]["status"],
+	{ className: string; label: string }
+> = {
+	supported: {
+		className: "border-[#3b6d65] bg-[#d8eee7] text-[#2f5c55]",
+		label: "supported",
+	},
+	weak: {
+		className: "border-[#a16c1b] bg-[#fff4d6] text-[#7a5013]",
+		label: "weak support",
+	},
+	contradicted: {
+		className: "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]",
+		label: "contradicted",
+	},
+	missing: {
+		className: "border-[#6f716d] bg-[#efefea] text-[#4a4c48]",
+		label: "missing support",
+	},
+};
 
+function ClaimVerificationPanel({ claims }: { claims: VerifiedClaim[] }) {
 	return (
 		<div className="mt-5 border-[#d7d8d1] border-t pt-4 text-sm leading-5">
 			<p className="mb-2 font-semibold text-[#20211f]">
 				Claim evidence support
 			</p>
 			<div className="grid gap-2">
-				{claimItems.map(({ item: claim, key }) => (
-					<ClaimVerificationCard claim={claim} key={key} />
+				{claims.map((claim) => (
+					<ClaimVerificationCard
+						claim={claim}
+						key={`${claim.verification.status}:${claim.text}`}
+					/>
 				))}
 			</div>
 		</div>
@@ -261,15 +236,15 @@ function ClaimVerificationPanel({ claims }: { claims: VerifiedClaim[] }) {
 }
 
 function ClaimVerificationCard({ claim }: { claim: VerifiedClaim }) {
-	const statusClassName = claimStatusClassName(claim.verification.status);
+	const status = claimStatusUi[claim.verification.status];
 
 	return (
 		<div className="border border-[#c9cac3] bg-[#fbfcf7] p-3">
 			<div className="mb-2 flex flex-wrap items-center gap-2">
 				<span
-					className={`border px-2 py-1 font-semibold text-xs ${statusClassName}`}
+					className={`border px-2 py-1 font-semibold text-xs ${status.className}`}
 				>
-					{claimStatusLabel(claim.verification.status)}
+					{status.label}
 				</span>
 				<span className="text-[#6f716d] text-xs">
 					source evidence support, not world-truth verification
@@ -289,44 +264,6 @@ function ClaimVerificationCard({ claim }: { claim: VerifiedClaim }) {
 			</div>
 		</div>
 	);
-}
-
-function claimStatusClassName(status: VerifiedClaim["verification"]["status"]) {
-	switch (status) {
-		case "supported":
-			return "border-[#3b6d65] bg-[#d8eee7] text-[#2f5c55]";
-		case "weak":
-			return "border-[#a16c1b] bg-[#fff4d6] text-[#7a5013]";
-		case "contradicted":
-			return "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]";
-		case "missing":
-			return "border-[#6f716d] bg-[#efefea] text-[#4a4c48]";
-	}
-}
-
-function claimStatusLabel(status: VerifiedClaim["verification"]["status"]) {
-	switch (status) {
-		case "supported":
-			return "supported";
-		case "weak":
-			return "weak support";
-		case "contradicted":
-			return "contradicted";
-		case "missing":
-			return "missing support";
-	}
-}
-
-function traceStepKey(step: AiTraceStep): string {
-	if ("durationMs" in step) {
-		return `${step.stage}:${step.status}:${step.durationMs}`;
-	}
-
-	if ("error" in step) {
-		return `${step.stage}:${step.status}:${step.error}`;
-	}
-
-	return `${step.stage}:${step.status}`;
 }
 
 function TraceStepCard({ index, step }: { index: number; step: AiTraceStep }) {
@@ -373,10 +310,6 @@ function TraceJson({ label, value }: { label: string; value: unknown }) {
 			</pre>
 		</div>
 	);
-}
-
-function citationElementId(citationHandle: string): string {
-	return `citation-${citationHandle.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function CitationMarker({

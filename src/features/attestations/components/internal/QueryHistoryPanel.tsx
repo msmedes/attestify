@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { Clock3 } from "lucide-react";
 import type { QueryRunSummary } from "../../types";
 
@@ -35,40 +36,54 @@ export function QueryHistoryPanel({
 				) : null}
 
 				{runs.map((run) => (
-					<button
-						aria-pressed={activeRunId === run.id}
-						className={`block min-h-24 w-full border-[#d6d8cf] border-b p-4 text-left transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px] ${
-							activeRunId === run.id ? "bg-[#d8eee7]" : ""
+					<div
+						className={`border-[#d6d8cf] border-b transition-colors ${
+							activeRunId === run.id ? "bg-[#d8eee7]" : "bg-[#ffffff]"
 						}`}
 						key={run.id}
-						onClick={() => onRunSelected(run)}
-						type="button"
 					>
-						<div className="mb-2 font-medium text-sm leading-5">
-							{run.query}
-						</div>
-						<div className="line-clamp-2 text-[#686a64] text-sm leading-5">
-							{run.answerText || run.answerStatus}
-						</div>
-						<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[#3b6d65] text-xs">
-							<span>{new Date(run.createdAt).toLocaleString()}</span>
-							<span className="tabular-nums">
-								{run.citationCount} citations
-							</span>
-							<span className="tabular-nums">
-								{run.retrievalQueryCount} retrieval queries
-							</span>
-							{run.claimVerification ? (
+						<button
+							aria-pressed={activeRunId === run.id}
+							className="block min-h-24 w-full p-4 text-left transition-colors transition-transform hover:bg-[#d8eee7] active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px]"
+							onClick={() => onRunSelected(run)}
+							type="button"
+						>
+							<div className="mb-2 font-medium text-sm leading-5">
+								{run.query}
+							</div>
+							<div className="line-clamp-2 text-[#686a64] text-sm leading-5">
+								{run.answerText || run.answerStatus}
+							</div>
+							<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[#3b6d65] text-xs">
+								<span>{new Date(run.createdAt).toLocaleString()}</span>
+								<span>{run.queryMode}</span>
 								<span className="tabular-nums">
-									{run.claimVerification.supported} source-supported /{" "}
-									{run.claimVerification.weak} weak /{" "}
-									{run.claimVerification.contradicted +
-										run.claimVerification.missing}{" "}
-									needs review
+									{run.citationCount} citations
 								</span>
-							) : null}
+								<span className="tabular-nums">
+									{run.retrievalQueryCount} retrieval queries
+								</span>
+								{run.claimVerification ? (
+									<span className="tabular-nums">
+										{run.claimVerification.supported} source-supported /{" "}
+										{run.claimVerification.weak} weak /{" "}
+										{run.claimVerification.contradicted +
+											run.claimVerification.missing}{" "}
+										needs review
+									</span>
+								) : null}
+							</div>
+						</button>
+						<div className="flex justify-end px-4 pb-3">
+							<Link
+								className="inline-flex min-h-8 items-center border border-[#20211f] bg-[#ffffff] px-2 text-[#20211f] text-xs transition-colors hover:bg-[#f4f5ef] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-2"
+								params={{ runId: run.id }}
+								to="/queries/$runId"
+							>
+								Query page
+							</Link>
 						</div>
-					</button>
+					</div>
 				))}
 			</div>
 		</section>
