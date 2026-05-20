@@ -56,8 +56,8 @@ export type SourceDocumentIngestion = {
 	externalSourceId: string;
 	sourceId: string;
 	snapshotId: string;
-	snapshotVersion: string;
-	contentHash: string;
+	snapshotVersion?: string;
+	contentHash?: string;
 	extractionRunId?: string;
 	extractorVersion?: string;
 	verifiedAt?: string;

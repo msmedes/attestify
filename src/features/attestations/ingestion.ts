@@ -328,7 +328,14 @@ function optionalField<Key extends string>(
 ): Partial<Record<Key, string>> {
 	const normalized = normalizeOptional(value);
 
-	return normalized ? { [key]: normalized } : {};
+	if (!normalized) {
+		return {};
+	}
+
+	const field = {} as Record<Key, string>;
+	field[key] = normalized;
+
+	return field;
 }
 
 function optionalMetadata(metadata: ConnectorMetadata | undefined): {

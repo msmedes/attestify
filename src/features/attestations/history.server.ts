@@ -5,9 +5,12 @@ import process from "node:process";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
+import { buildCitationIdentity, citationLabel } from "./citation-identity";
+import { findSource, findSpan } from "./corpus";
 import { queryRuns } from "./history.schema";
 import type {
 	AiAnswerSegment,
+	CitationUnit,
 	QueryRunDetail,
 	QueryRunSummary,
 	SearchResponse,
@@ -123,12 +126,62 @@ export function getQueryRunDetail(id: string): QueryRunDetail | null {
 	try {
 		return {
 			...summarizeRun(run),
-			response: parseHistoryJson(run.responseJson) as SearchResponse,
+			response: upgradePersistedSearchResponse(
+				parseHistoryJson(run.responseJson),
+			),
 		};
 	} catch (error) {
 		logCorruptHistoryRun(run.id, error);
 		throw new CorruptHistoryRunError(run.id, error);
 	}
+}
+
+function upgradePersistedSearchResponse(value: unknown): SearchResponse {
+	const response = value as SearchResponse;
+
+	return {
+		...response,
+		citations: (response.citations ?? []).map((citation, index) =>
+			upgradePersistedCitation(citation, index),
+		),
+	};
+}
+
+function upgradePersistedCitation(
+	citation: CitationUnit,
+	index: number,
+): CitationUnit {
+	if (citation.citationIdentity && citation.citationLabel) {
+		return citation;
+	}
+
+	const source = findSource(citation.source.sourceId);
+	const span = findSpan(citation.span.spanId);
+
+	return {
+		...citation,
+		citationIdentity:
+			source && span
+				? buildCitationIdentity({
+						attestation: citation.attestation,
+						source,
+						span,
+					})
+				: {
+						status: "legacy",
+						legacyHandle: citation.citationHandle,
+						reason:
+							"Persisted history citation could not be matched to current source metadata.",
+						span: {
+							legacySpanId: citation.span.spanId,
+							locator: citation.span.locator,
+						},
+						attestation: {
+							legacyAttestationId: citation.attestation.id,
+						},
+					},
+		citationLabel: citation.citationLabel || citationLabel(index),
+	};
 }
 
 type QueryRunRow = typeof queryRuns.$inferSelect;

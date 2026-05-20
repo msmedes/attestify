@@ -6,7 +6,7 @@ type CitationCardProps = {
 };
 
 export function CitationCard({ citation }: CitationCardProps) {
-	const { attestation, source, span, support } = citation;
+	const { attestation, citationIdentity, source, span, support } = citation;
 
 	return (
 		<article
@@ -15,9 +15,9 @@ export function CitationCard({ citation }: CitationCardProps) {
 		>
 			<div className="border-[#20211f] border-b p-3">
 				<div className="mb-2 flex items-start justify-between gap-3">
-					<code className="break-all bg-[#f7f7f2] px-1 py-0.5 text-[#3b6d65] text-[11px] leading-5">
-						{citation.citationHandle}
-					</code>
+					<span className="bg-[#f7f7f2] px-1 py-0.5 font-semibold text-[#3b6d65] text-xs leading-5">
+						{citation.citationLabel}
+					</span>
 					<span className="text-[#6f716d] text-xs tabular-nums">
 						{citation.score.toFixed(3)}
 					</span>
@@ -46,6 +46,17 @@ export function CitationCard({ citation }: CitationCardProps) {
 						{source.title}, {span.section}, {span.locator}
 					</span>
 				</div>
+
+				<details className="text-[#6f716d] text-xs">
+					<summary className="cursor-pointer text-[#3b6d65]">
+						Citation provenance
+					</summary>
+					<code className="mt-2 block break-all bg-[#f7f7f2] p-2 leading-5">
+						{citationIdentity.status === "resolvable"
+							? `${citationIdentity.connectorId}:${citationIdentity.externalSourceId}:${citationIdentity.sourceSnapshot.version ?? citationIdentity.sourceSnapshot.contentHash}:${citationIdentity.span.locator}`
+							: citation.citationHandle}
+					</code>
+				</details>
 			</div>
 		</article>
 	);

@@ -511,7 +511,7 @@ function normalizeForMatch(text: string): string {
 function formatAnswerLine(citation: CitationUnit): string {
 	const { attestation } = citation;
 
-	return `${attestation.subject} ${attestation.predicate} ${attestation.value} [${citation.citationHandle}]`;
+	return `${attestation.subject} ${attestation.predicate} ${attestation.value} ${citation.citationLabel}`;
 }
 
 function roundScore(score: number): number {
