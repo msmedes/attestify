@@ -210,9 +210,25 @@ export async function runEvidenceLoop({
 				...(search?.retrievalChunks.map((chunk) => chunk.spanId) ?? []),
 				...inspectedSpans.keys(),
 			]);
+			const repeatedSpanIds = action.spanIds.filter((spanId) =>
+				inspectedSpans.has(spanId),
+			);
 			const unknownSpanIds = action.spanIds.filter(
 				(spanId) => !availableSpanIds.has(spanId),
 			);
+
+			if (repeatedSpanIds.length > 0) {
+				stopReason = "invalid-action";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason: `Inspect action repeated already inspected span IDs: ${repeatedSpanIds.join(", ")}.`,
+					},
+				});
+				break;
+			}
 
 			if (unknownSpanIds.length > 0) {
 				stopReason = "invalid-action";
@@ -566,12 +582,21 @@ function actionKey(
 	}
 
 	if (action.type === "inspect") {
-		return `inspect:${[...(action.spanIds ?? [])].sort().join("\u0000")}`;
+		return `inspect:${[...(action.spanIds ?? [])]
+			.map((value) => value.toLowerCase())
+			.sort()
+			.join("\u0000")}`;
 	}
 
 	return [
 		"search",
-		[...(action.queries ?? [])].sort().join("\u0000"),
-		[...(action.exactPhrases ?? [])].sort().join("\u0000"),
+		[...(action.queries ?? [])]
+			.map((value) => value.toLowerCase())
+			.sort()
+			.join("\u0000"),
+		[...(action.exactPhrases ?? [])]
+			.map((value) => value.toLowerCase())
+			.sort()
+			.join("\u0000"),
 	].join(":");
 }

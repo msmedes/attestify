@@ -303,7 +303,8 @@ describe("runEvidenceLoop", () => {
 				}),
 				expect.objectContaining({
 					rejectedAction: {
-						reason: "Repeated evidence action.",
+						reason:
+							"Inspect action repeated already inspected span IDs: span-1.",
 					},
 				}),
 			],
@@ -336,7 +337,37 @@ describe("runEvidenceLoop", () => {
 				}),
 				expect.objectContaining({
 					rejectedAction: {
-						reason: "Repeated evidence action.",
+						reason:
+							"Inspect action repeated already inspected span IDs: span-2, span-1.",
+					},
+				}),
+			],
+		});
+	});
+
+	it("rejects partially repeated inspections", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice rabbit"] },
+				{ type: "inspect", spanIds: ["span-1", "span-2"] },
+				{ type: "inspect", spanIds: ["span-2", "span-3"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 3 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.any(Object),
+				expect.any(Object),
+				expect.objectContaining({
+					rejectedAction: {
+						reason:
+							"Inspect action repeated already inspected span IDs: span-2.",
 					},
 				}),
 			],
@@ -366,6 +397,32 @@ describe("runEvidenceLoop", () => {
 						exactPhrases: [],
 					},
 				}),
+				expect.objectContaining({
+					rejectedAction: {
+						reason: "Repeated evidence action.",
+					},
+				}),
+			],
+		});
+	});
+
+	it("rejects repeated searches with changed casing", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice Rabbit"] },
+				{ type: "search", queries: ["alice rabbit"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.any(Object),
 				expect.objectContaining({
 					rejectedAction: {
 						reason: "Repeated evidence action.",
