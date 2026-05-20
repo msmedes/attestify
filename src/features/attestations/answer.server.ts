@@ -17,6 +17,7 @@ import { tryRecordQueryRun } from "./history.server";
 import {
 	buildCitationCandidatesFromChunks,
 	createDefaultLazyExpansionOptions,
+	type LazyExtractionAttemptSummary,
 	runLazyExtractionForSpanIds,
 	searchCorpusWithQueries,
 	selectVerifiedCitationUnits,
@@ -205,10 +206,15 @@ async function runAgenticEvidenceLoop(
 					options: createDefaultLazyExpansionOptions(),
 					spanIds,
 				});
+				const extractionChunks = buildExtractionCitationChunks({
+					search,
+					spanIds,
+				});
 				const candidates = buildCitationCandidatesFromChunks({
+					includeExistingAttestations: false,
 					promotedBySpanId: extraction.promotedBySpanId,
 					query,
-					retrievalChunks: search.retrievalChunks,
+					retrievalChunks: extractionChunks,
 				});
 				const citations = selectVerifiedCitationUnits(query, candidates, {
 					limit: 30,
@@ -219,13 +225,13 @@ async function runAgenticEvidenceLoop(
 					attempts: extraction.attempts,
 					citations,
 					promotedAttestationIds: extraction.promotedAttestationIds,
-					rejectedCandidateCount: extraction.attempts.reduce(
-						(count, attempt) => count + attempt.rejections,
-						0,
+					rejectedCandidateCount: countExtractionAttempts(
+						extraction.attempts,
+						"rejections",
 					),
-					verifiedCandidateCount: extraction.attempts.reduce(
-						(count, attempt) => count + attempt.verifiedCandidates,
-						0,
+					verifiedCandidateCount: countExtractionAttempts(
+						extraction.attempts,
+						"verifiedCandidates",
 					),
 				};
 			},
@@ -266,6 +272,53 @@ async function runAgenticEvidenceLoop(
 	traceSteps.push(loop.traceStep, ...loop.searchTraceSteps);
 
 	return loop.search ?? emptyAgenticSearchResponse(query);
+}
+
+export function buildExtractionCitationChunks({
+	search,
+	spanIds,
+}: {
+	search: SearchResponse;
+	spanIds: string[];
+}) {
+	const chunksBySpanId = new Map(
+		search.retrievalChunks.map((chunk) => [chunk.spanId, chunk]),
+	);
+
+	return spanIds.flatMap((spanId) => {
+		const chunk = chunksBySpanId.get(spanId);
+
+		if (chunk) {
+			return [chunk];
+		}
+
+		const span = findSpan(spanId);
+		const source = span ? findSource(span.sourceId) : undefined;
+
+		if (!span || !source) {
+			return [];
+		}
+
+		return [
+			{
+				spanId: span.spanId,
+				sourceId: source.sourceId,
+				title: source.title,
+				kind: source.kind,
+				section: span.section,
+				locator: span.locator,
+				text: span.text,
+				score: 1,
+			},
+		];
+	});
+}
+
+export function countExtractionAttempts(
+	attempts: LazyExtractionAttemptSummary[],
+	key: "rejections" | "verifiedCandidates",
+): number {
+	return attempts.reduce((count, attempt) => count + attempt[key], 0);
 }
 
 function emptyAgenticSearchResponse(query: string): SearchResponse {

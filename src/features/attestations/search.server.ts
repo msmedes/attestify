@@ -382,10 +382,12 @@ export async function runLazyExtractionForSpanIds({
 }
 
 export function buildCitationCandidatesFromChunks({
+	includeExistingAttestations = true,
 	promotedBySpanId = new Map(),
 	query,
 	retrievalChunks,
 }: {
+	includeExistingAttestations?: boolean;
 	promotedBySpanId?: Map<string, Attestation[]>;
 	query: string;
 	retrievalChunks: RetrievalChunk[];
@@ -402,7 +404,7 @@ export function buildCitationCandidatesFromChunks({
 			const citationSpan: SourceSpan = {
 				...span,
 				attestations: [
-					...span.attestations,
+					...(includeExistingAttestations ? span.attestations : []),
 					...(promotedBySpanId.get(span.spanId) ?? []),
 				],
 			};
