@@ -27,6 +27,7 @@ import {
 	runLazyExtractionLifecycle,
 } from "./ingestion";
 import type {
+	AiTraceTiming,
 	AiTraceTimingSpan,
 	Attestation,
 	CitationUnit,
@@ -274,6 +275,7 @@ export async function searchCorpusWithQueries({
 			steps: lazyExpansionResult
 				? [retrievalTraceStep, lazyExpansionResult.traceStep]
 				: [retrievalTraceStep],
+			timing: buildTraceTiming(timingSpans, startedAt),
 		},
 		answerLines: citations.slice(0, 4).map(formatAnswerLine),
 		citations,
@@ -897,6 +899,23 @@ function formatAnswerLine(citation: CitationUnit): string {
 
 function elapsedMs(startedAt: number): number {
 	return Math.round(performance.now() - startedAt);
+}
+
+function buildTraceTiming(
+	spans: AiTraceTimingSpan[],
+	startedAt: number,
+): AiTraceTiming {
+	const totalMs = elapsedMs(startedAt);
+	const modelProviderMs = spans
+		.filter((span) => span.category === "model-provider")
+		.reduce((total, span) => total + span.durationMs, 0);
+
+	return {
+		totalMs,
+		modelProviderMs,
+		applicationMs: Math.max(0, totalMs - modelProviderMs),
+		spans,
+	};
 }
 
 function roundScore(score: number): number {

@@ -1,5 +1,10 @@
 import { Braces } from "lucide-react";
-import type { AiAnswer, AiTrace, AiTraceStep } from "../../types";
+import type {
+	AiAnswer,
+	AiTrace,
+	AiTraceStep,
+	AiTraceTimingSpan,
+} from "../../types";
 
 type AnswerPanelProps = {
 	aiAnswer?: AiAnswer;
@@ -134,11 +139,94 @@ function AiTracePanel({ trace }: { trace: AiTrace }) {
 	return (
 		<div className="mt-5 border-[#d7d8d1] border-t pt-4 text-sm leading-5">
 			<p className="mb-2 font-semibold text-[#20211f]">AI trace</p>
+			{trace.timing ? <TraceWaterfall trace={trace} /> : null}
 			<div className="grid gap-2">
 				{trace.steps.map((step, index) => (
 					<TraceStepCard index={index} key={traceStepKey(step)} step={step} />
 				))}
 			</div>
+		</div>
+	);
+}
+
+function TraceWaterfall({ trace }: { trace: AiTrace }) {
+	if (!trace.timing) {
+		return null;
+	}
+
+	const spans = trace.timing.spans.filter((span) => span.durationMs >= 0);
+	const spanItems = withOccurrenceKeys(
+		spans,
+		(span) =>
+			`${span.stage}:${span.label}:${span.category}:${span.durationMs}:${span.model ?? ""}:${span.count ?? ""}`,
+	);
+
+	return (
+		<div className="mb-3 border border-[#c9cac3] bg-[#fbfcf7] p-3">
+			<div className="grid gap-2 sm:grid-cols-3">
+				<TraceMetric label="total" value={`${trace.timing.totalMs}ms`} />
+				<TraceMetric
+					label="model provider"
+					value={`${trace.timing.modelProviderMs}ms`}
+				/>
+				<TraceMetric
+					label="application"
+					value={`${trace.timing.applicationMs}ms`}
+				/>
+			</div>
+			<div className="mt-3 grid gap-2">
+				{spanItems.map(({ item: span, key }) => (
+					<TraceWaterfallRow
+						key={key}
+						span={span}
+						totalMs={trace.timing?.totalMs ?? 0}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function TraceMetric({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="border border-[#d7d8d1] bg-[#ffffff] px-3 py-2">
+			<p className="text-[#6f716d] text-xs">{label}</p>
+			<p className="font-semibold text-[#20211f] tabular-nums">{value}</p>
+		</div>
+	);
+}
+
+function TraceWaterfallRow({
+	span,
+	totalMs,
+}: {
+	span: AiTraceTimingSpan;
+	totalMs: number;
+}) {
+	const width = `${Math.max(2, Math.round((span.durationMs / Math.max(totalMs, 1)) * 100))}%`;
+	const barClassName =
+		span.category === "model-provider" ? "bg-[#c14f2f]" : "bg-[#3b6d65]";
+	const detail = [
+		span.model,
+		typeof span.count === "number" ? `${span.count} items` : null,
+	]
+		.filter(Boolean)
+		.join(" · ");
+
+	return (
+		<div>
+			<div className="mb-1 flex items-baseline justify-between gap-3">
+				<p className="min-w-0 truncate text-[#20211f]">
+					{span.stage} · {span.label}
+				</p>
+				<p className="shrink-0 text-[#4a4c48] tabular-nums">
+					{span.durationMs}ms
+				</p>
+			</div>
+			<div className="h-2 border border-[#d7d8d1] bg-[#ffffff]">
+				<div className={`h-full ${barClassName}`} style={{ width }} />
+			</div>
+			{detail ? <p className="mt-1 text-[#6f716d] text-xs">{detail}</p> : null}
 		</div>
 	);
 }

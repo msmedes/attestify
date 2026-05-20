@@ -179,6 +179,31 @@ const aiAnswerSchema = z.discriminatedUnion("status", [
 				}),
 			]),
 		),
+		claims: z
+			.array(
+				z.object({
+					text: z.string(),
+					citationHandles: z.array(z.string()),
+					verification: z.object({
+						status: z.enum(["supported", "contradicted", "weak", "missing"]),
+						method: z.string(),
+						rationale: z.string(),
+						evidence: z.array(
+							z.object({
+								citationHandle: z.string(),
+								attestationText: z.string(),
+								anchorQuote: z.string(),
+								sourceSpanText: z.string(),
+								sourceTitle: z.string(),
+								locator: z.string(),
+								sourceSnapshotId: z.string().optional(),
+								citationIdentityStatus: z.enum(["resolvable", "legacy"]),
+							}),
+						),
+					}),
+				}),
+			)
+			.optional(),
 	}),
 	z.object({
 		status: z.literal("unavailable"),
