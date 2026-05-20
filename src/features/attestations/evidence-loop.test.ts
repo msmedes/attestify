@@ -136,7 +136,7 @@ describe("runEvidenceLoop", () => {
 					requestedAction: { type: "browse_web", query: "Hamlet" },
 					rejectedAction: expect.objectContaining({
 						reason: expect.stringContaining(
-							"Expected 'search' | 'inspect' | 'stop'",
+							"Expected 'search' | 'extract' | 'inspect' | 'stop'",
 						),
 					}),
 				}),
@@ -168,6 +168,102 @@ describe("runEvidenceLoop", () => {
 					},
 				}),
 			],
+		});
+	});
+
+	it("lets host extraction promote verified attestations into citation candidates", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["lazy marker"] },
+				{ type: "extract", spanIds: ["span-1"] },
+				{ type: "stop", reason: "enough-evidence" },
+			]),
+			query: "What does the lazy marker say?",
+			tools: {
+				extract: async () => ({
+					attempts: [
+						{
+							spanId: "span-1",
+							cacheHit: false,
+							rawCandidates: 1,
+							verifiedCandidates: 1,
+							promotions: 1,
+							rejections: 0,
+						},
+					],
+					citations: fakeSearchResponse({
+						citations: 1,
+						chunks: 1,
+						text: "Verified lazy marker text.",
+					}).citations,
+					promotedAttestationIds: ["att-promoted-1"],
+					rejectedCandidateCount: 0,
+					verifiedCandidateCount: 1,
+				}),
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.status).toBe("ready");
+		expect(result.search?.citations).toHaveLength(1);
+		expect(result.traceStep.output.budgetUsage.extractionCalls).toBe(1);
+		expect(result.traceStep.output.iterations[1]).toMatchObject({
+			validatedAction: {
+				type: "extract",
+				spanIds: ["span-1"],
+			},
+			resultSummary: {
+				extraction: {
+					attemptedSpanIds: ["span-1"],
+					promotedAttestationIds: ["att-promoted-1"],
+					rejectedCandidateCount: 0,
+					verifiedCandidateCount: 1,
+				},
+			},
+		});
+	});
+
+	it("keeps rejected extraction candidates out of citations", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["rejected lazy marker"] },
+				{ type: "extract", spanIds: ["span-1"] },
+				{ type: "stop", reason: "insufficient-evidence" },
+			]),
+			query: "What does the rejected lazy marker say?",
+			tools: {
+				extract: async () => ({
+					attempts: [
+						{
+							spanId: "span-1",
+							cacheHit: false,
+							rawCandidates: 1,
+							verifiedCandidates: 0,
+							promotions: 0,
+							rejections: 1,
+						},
+					],
+					citations: [],
+					promotedAttestationIds: [],
+					rejectedCandidateCount: 1,
+					verifiedCandidateCount: 0,
+				}),
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.search?.citations).toEqual([]);
+		expect(JSON.stringify(result.search)).not.toContain("Rejected lazy marker");
+		expect(result.traceStep.output.iterations[1]).toMatchObject({
+			resultSummary: {
+				extraction: {
+					promotedAttestationIds: [],
+					rejectedCandidateCount: 1,
+					verifiedCandidateCount: 0,
+				},
+			},
 		});
 	});
 

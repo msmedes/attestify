@@ -330,6 +330,7 @@ export type EvidenceLoopTraceStep = {
 			maxModelCalls: number;
 			maxRetrievedSpans: number;
 			maxInspectedSpans: number;
+			maxExtractionCalls: number;
 			maxElapsedMs: number;
 		};
 	};
@@ -340,13 +341,14 @@ export type EvidenceLoopTraceStep = {
 			modelCalls: number;
 			retrievedSpans: number;
 			inspectedSpans: number;
+			extractionCalls: number;
 			elapsedMs: number;
 		};
 		iterations: Array<{
 			iteration: number;
 			requestedAction: unknown;
 			validatedAction?: {
-				type: "search" | "inspect" | "stop";
+				type: "search" | "inspect" | "extract" | "stop";
 				queries?: string[];
 				exactPhrases?: string[];
 				spanIds?: string[];
@@ -366,6 +368,12 @@ export type EvidenceLoopTraceStep = {
 					section: string;
 					locator: string;
 				}>;
+				extraction?: {
+					attemptedSpanIds: string[];
+					promotedAttestationIds: string[];
+					rejectedCandidateCount: number;
+					verifiedCandidateCount: number;
+				};
 			};
 		}>;
 		consideredEvidence: Array<{

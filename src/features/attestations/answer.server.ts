@@ -14,7 +14,14 @@ import {
 	runEvidenceLoop,
 } from "./evidence-loop";
 import { tryRecordQueryRun } from "./history.server";
-import { searchCorpusWithQueries } from "./search.server";
+import {
+	buildCitationCandidatesFromChunks,
+	createDefaultLazyExpansionOptions,
+	type LazyExtractionAttemptSummary,
+	runLazyExtractionForSpanIds,
+	searchCorpusWithQueries,
+	selectVerifiedCitationUnits,
+} from "./search.server";
 import type {
 	AiAnswer,
 	AiAnswerSegment,
@@ -194,6 +201,40 @@ async function runAgenticEvidenceLoop(
 		planner: createModelEvidencePlanner(),
 		query,
 		tools: {
+			extract: async ({ search, spanIds }) => {
+				const extraction = await runLazyExtractionForSpanIds({
+					options: createDefaultLazyExpansionOptions(),
+					spanIds,
+				});
+				const extractionChunks = buildExtractionCitationChunks({
+					search,
+					spanIds,
+				});
+				const candidates = buildCitationCandidatesFromChunks({
+					includeExistingAttestations: false,
+					promotedBySpanId: extraction.promotedBySpanId,
+					query,
+					retrievalChunks: extractionChunks,
+				});
+				const citations = selectVerifiedCitationUnits(query, candidates, {
+					limit: 30,
+					minScore: 0,
+				});
+
+				return {
+					attempts: extraction.attempts,
+					citations,
+					promotedAttestationIds: extraction.promotedAttestationIds,
+					rejectedCandidateCount: countExtractionAttempts(
+						extraction.attempts,
+						"rejections",
+					),
+					verifiedCandidateCount: countExtractionAttempts(
+						extraction.attempts,
+						"verifiedCandidates",
+					),
+				};
+			},
 			inspect: async ({ spanIds }) =>
 				spanIds.flatMap((spanId) => {
 					const span = findSpan(spanId);
@@ -231,6 +272,53 @@ async function runAgenticEvidenceLoop(
 	traceSteps.push(loop.traceStep, ...loop.searchTraceSteps);
 
 	return loop.search ?? emptyAgenticSearchResponse(query);
+}
+
+export function buildExtractionCitationChunks({
+	search,
+	spanIds,
+}: {
+	search: SearchResponse;
+	spanIds: string[];
+}) {
+	const chunksBySpanId = new Map(
+		search.retrievalChunks.map((chunk) => [chunk.spanId, chunk]),
+	);
+
+	return spanIds.flatMap((spanId) => {
+		const chunk = chunksBySpanId.get(spanId);
+
+		if (chunk) {
+			return [chunk];
+		}
+
+		const span = findSpan(spanId);
+		const source = span ? findSource(span.sourceId) : undefined;
+
+		if (!span || !source) {
+			return [];
+		}
+
+		return [
+			{
+				spanId: span.spanId,
+				sourceId: source.sourceId,
+				title: source.title,
+				kind: source.kind,
+				section: span.section,
+				locator: span.locator,
+				text: span.text,
+				score: 1,
+			},
+		];
+	});
+}
+
+export function countExtractionAttempts(
+	attempts: LazyExtractionAttemptSummary[],
+	key: "rejections" | "verifiedCandidates",
+): number {
+	return attempts.reduce((count, attempt) => count + attempt[key], 0);
 }
 
 function emptyAgenticSearchResponse(query: string): SearchResponse {
@@ -327,10 +415,11 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 			systemPrompts: [
 				[
 					"You drive a bounded source-evidence loop.",
-					"You may request one typed action: search, inspect, or stop.",
+					"You may request one typed action: search, inspect, extract, or stop.",
 					"Do not answer the user question.",
 					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
 					"After a search, inspect only promising span IDs when seeing the full span text could help choose a narrower follow-up search.",
+					"Request extract only for retrieved or inspected span IDs where host-verified promotion could improve citation candidates.",
 					"Use exactPhrases for quoted terms, named objects, titles, unusual wording, and names.",
 					"If prior retrieved chunks and citations are enough to answer from source evidence, stop with reason enough-evidence.",
 					"If prior evidence is not enough and another search is unlikely to help, stop with reason insufficient-evidence.",
