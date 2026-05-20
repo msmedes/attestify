@@ -60,7 +60,7 @@ export function QueryHistoryPanel({
 							</span>
 							{run.claimVerification ? (
 								<span className="tabular-nums">
-									{run.claimVerification.supported} supported /{" "}
+									{run.claimVerification.supported} source-supported /{" "}
 									{run.claimVerification.weak} weak /{" "}
 									{run.claimVerification.contradicted +
 										run.claimVerification.missing}{" "}
