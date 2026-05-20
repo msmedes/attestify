@@ -1,4 +1,5 @@
-import { CheckCircle2, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText } from "lucide-react";
+import { citationDiagnosticState } from "../../citation-state";
 import type { CitationUnit } from "../../types";
 
 type CitationCardProps = {
@@ -15,10 +16,11 @@ export function CitationCard({ citation }: CitationCardProps) {
 		support,
 	} = citation;
 	const isUnresolvedHistoryEvidence = historyEvidence?.status === "unresolved";
+	const diagnosticState = citationDiagnosticState(citation);
 
 	return (
 		<article
-			className="scroll-mt-4 border border-[#20211f] bg-[#ffffff] transition-shadow target:shadow-[6px_6px_0_#c14f2f]"
+			className={`scroll-mt-4 border bg-[#ffffff] transition-shadow target:shadow-[6px_6px_0_#c14f2f] ${cardBorderClass(diagnosticState.status)}`}
 			id={citationElementId(citation.citationHandle)}
 		>
 			<div className="border-[#20211f] border-b p-3">
@@ -30,6 +32,11 @@ export function CitationCard({ citation }: CitationCardProps) {
 						{citation.score.toFixed(3)}
 					</span>
 				</div>
+				<div
+					className={`mb-2 inline-flex border px-2 py-1 text-xs ${stateBadgeClass(diagnosticState.status)}`}
+				>
+					{diagnosticState.label}
+				</div>
 				<h3 className="font-semibold leading-tight">{attestation.subject}</h3>
 				<p className="mt-1 text-[#20211f] text-sm leading-5">
 					{attestation.predicate}: {attestation.value}
@@ -37,14 +44,22 @@ export function CitationCard({ citation }: CitationCardProps) {
 			</div>
 
 			<div className="grid gap-3 p-3 text-sm">
-				<div className="flex items-center gap-2 text-[#3b6d65] leading-5">
-					<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
+				<div
+					className={`flex items-center gap-2 leading-5 ${verificationClass(diagnosticState.status)}`}
+				>
+					{diagnosticState.status === "resolved" ? (
+						<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
+					) : (
+						<AlertTriangle aria-hidden="true" className="shrink-0" size={16} />
+					)}
 					<span>
-						{isUnresolvedHistoryEvidence
-							? historyEvidence.reason
-							: support.verifiedAgainstSource
-								? support.method
-								: "not verified"}
+						{diagnosticState.status === "unresolved"
+							? diagnosticState.description
+							: diagnosticState.status === "stale"
+								? diagnosticState.description
+								: support.verifiedAgainstSource
+									? `${support.method}; ${diagnosticState.description}`
+									: "not verified"}
 					</span>
 				</div>
 
@@ -86,4 +101,42 @@ export function CitationCard({ citation }: CitationCardProps) {
 
 function citationElementId(citationHandle: string): string {
 	return `citation-${citationHandle.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function cardBorderClass(status: "resolved" | "stale" | "unresolved"): string {
+	if (status === "unresolved") {
+		return "border-[#9f2f2f]";
+	}
+
+	if (status === "stale") {
+		return "border-[#9b6a20]";
+	}
+
+	return "border-[#20211f]";
+}
+
+function stateBadgeClass(status: "resolved" | "stale" | "unresolved"): string {
+	if (status === "unresolved") {
+		return "border-[#9f2f2f] bg-[#fff7f4] text-[#7a2424]";
+	}
+
+	if (status === "stale") {
+		return "border-[#9b6a20] bg-[#fffaf2] text-[#725018]";
+	}
+
+	return "border-[#3b6d65] bg-[#eef8f4] text-[#2f5c55]";
+}
+
+function verificationClass(
+	status: "resolved" | "stale" | "unresolved",
+): string {
+	if (status === "unresolved") {
+		return "text-[#7a2424]";
+	}
+
+	if (status === "stale") {
+		return "text-[#725018]";
+	}
+
+	return "text-[#3b6d65]";
 }

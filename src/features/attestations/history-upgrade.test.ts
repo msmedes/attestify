@@ -49,6 +49,7 @@ describe("history response compatibility", () => {
 					},
 					historyEvidence: {
 						status: "persisted",
+						context: "current-response",
 						sourceTitle: "Hamlet",
 						section: "Act 3",
 						locator: "paragraph 1",
@@ -105,6 +106,7 @@ describe("history response compatibility", () => {
 			},
 			historyEvidence: {
 				status: "persisted",
+				context: "saved-history",
 				sourceTitle: "Hamlet",
 				quote: "The Mousetrap",
 				sourceText: "The Mousetrap appears in the saved response.",
@@ -116,6 +118,7 @@ describe("history response compatibility", () => {
 		expect(searchResponseSchema.parse(upgraded).citations[0]).toMatchObject({
 			historyEvidence: {
 				status: "persisted",
+				context: "saved-history",
 			},
 		});
 	});
