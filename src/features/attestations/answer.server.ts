@@ -5,8 +5,14 @@ import {
 	claimsSafeForAnswerSegments,
 	verifyAnswerClaims,
 } from "./claim-verification";
+import { getCorpusStats } from "./corpus";
 import { tokenize } from "./embed";
 import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
+import {
+	type EvidenceLoopPlanner,
+	evidenceActionSchema,
+	runEvidenceLoop,
+} from "./evidence-loop";
 import { tryRecordQueryRun } from "./history.server";
 import { searchCorpusWithQueries } from "./search.server";
 import type {
@@ -37,14 +43,6 @@ type RetrievalPlan = {
 	traceStep: AiTraceStep;
 };
 
-type AgenticRetrievalPlan = {
-	exactPhrases: string[];
-	searchQueries: string[];
-	rationale: string;
-	error?: string;
-	traceStep: AiTraceStep;
-};
-
 type GeneratedAnswer = {
 	answer: AiAnswer;
 	traceSteps: AiTraceStep[];
@@ -57,12 +55,6 @@ type RerankedCitations = {
 
 const retrievalPlanSchema = z.object({
 	queries: z.array(z.string()).min(1).max(5),
-});
-
-const agenticRetrievalPlanSchema = z.object({
-	exactPhrases: z.array(z.string()).max(6),
-	searchQueries: z.array(z.string()).min(1).max(5),
-	rationale: z.string(),
 });
 
 const rerankSchema = z.object({
@@ -127,35 +119,27 @@ export async function answerCorpus(
 		return response;
 	}
 
-	const retrievalPlan =
+	const search =
 		queryMode === "agentic"
-			? await generateAgenticRetrievalPlan(query)
-			: await generateRetrievalPlan(query);
-	traceSteps.push(retrievalPlan.traceStep);
-	const search = await searchCorpusWithQueries({
-		query,
-		queryMode,
-		retrievalQueries:
-			queryMode === "agentic"
-				? retrievalPlan.searchQueries
-				: retrievalPlan.queries,
-		exactPhrases:
-			queryMode === "agentic" ? retrievalPlan.exactPhrases : undefined,
-		chunkLimit: 40,
-		citationLimit: 30,
-		citationScoreFloor: 0,
-	});
-	if (search.aiTrace) {
-		traceSteps.push(...search.aiTrace.steps);
-	}
+			? await runAgenticEvidenceLoop(query, traceSteps)
+			: await runHybridRetrieval(query, traceSteps);
 
-	if (retrievalPlan.error) {
+	const failedPlan = traceSteps.find(
+		(step) =>
+			(step.stage === "retrieval-plan" && step.status === "failed") ||
+			(step.stage === "evidence-loop" &&
+				step.output.stopReason !== "enough-evidence"),
+	);
+	if (failedPlan) {
 		const response = {
 			...search,
 			aiTrace: buildAiTrace(traceSteps, startedAt),
 			aiAnswer: {
 				status: "unavailable",
-				message: retrievalPlan.error,
+				message:
+					failedPlan.stage === "retrieval-plan"
+						? failedPlan.error
+						: `Agentic evidence loop stopped: ${failedPlan.output.stopReason}.`,
 			},
 		} satisfies SearchResponse;
 		tryRecordQueryRun(response);
@@ -177,6 +161,68 @@ export async function answerCorpus(
 	tryRecordQueryRun(response);
 
 	return response;
+}
+
+async function runHybridRetrieval(
+	query: string,
+	traceSteps: AiTraceStep[],
+): Promise<SearchResponse> {
+	const retrievalPlan = await generateRetrievalPlan(query);
+	traceSteps.push(retrievalPlan.traceStep);
+	const search = await searchCorpusWithQueries({
+		query,
+		queryMode: "hybrid",
+		retrievalQueries: retrievalPlan.queries,
+		chunkLimit: 40,
+		citationLimit: 30,
+		citationScoreFloor: 0,
+	});
+
+	if (search.aiTrace) {
+		traceSteps.push(...search.aiTrace.steps);
+	}
+
+	return search;
+}
+
+async function runAgenticEvidenceLoop(
+	query: string,
+	traceSteps: AiTraceStep[],
+): Promise<SearchResponse> {
+	const loop = await runEvidenceLoop({
+		model: serverEnv.openAi.model,
+		planner: createModelEvidencePlanner(),
+		query,
+		tools: {
+			search: ({ exactPhrases, queries }) =>
+				searchCorpusWithQueries({
+					query,
+					queryMode: "agentic",
+					retrievalQueries: queries,
+					exactPhrases,
+					chunkLimit: 40,
+					citationLimit: 30,
+					citationScoreFloor: 0,
+					lazyExpansion: false,
+				}),
+		},
+	});
+
+	traceSteps.push(loop.traceStep, ...loop.searchTraceSteps);
+
+	return loop.search ?? emptyAgenticSearchResponse(query);
+}
+
+function emptyAgenticSearchResponse(query: string): SearchResponse {
+	return {
+		query,
+		queryMode: "agentic",
+		retrievalQueries: [],
+		answerLines: [],
+		citations: [],
+		retrievalChunks: [],
+		corpusStats: getCorpusStats(),
+	};
 }
 
 async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
@@ -245,75 +291,52 @@ async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
 	}
 }
 
-async function generateAgenticRetrievalPlan(
-	query: string,
-): Promise<AgenticRetrievalPlan> {
+function createModelEvidencePlanner(): EvidenceLoopPlanner {
 	const model = serverEnv.openAi.model;
-	const startedAt = performance.now();
-	const fallback = {
-		exactPhrases: extractQuotedPhrases(query),
-		searchQueries: [query],
-		rationale: "Fallback to the user query because agentic planning failed.",
-	};
 
-	try {
-		const plan = await chat({
+	return async ({ citations, iteration, query, retrievalChunks }) => {
+		if (iteration > 1 && citations.length > 0) {
+			return {
+				type: "stop",
+				reason: "enough-evidence",
+			};
+		}
+
+		return chat({
 			adapter: openaiText(model),
-			outputSchema: agenticRetrievalPlanSchema,
+			outputSchema: evidenceActionSchema,
 			systemPrompts: [
 				[
-					"You plan a bounded corpus search.",
-					"Do not answer the question.",
-					"Prefer exact phrase probes for named phrases, quoted terms, titles, objects, and unusual wording.",
-					"Use search queries only for semantic context after exact phrase probes.",
-					"Avoid broad thematic expansions unless the user asks for themes.",
-					"Return at most 6 exact phrases and 3 to 5 search queries.",
+					"You drive a bounded source-evidence loop.",
+					"You may request one typed action: search or stop.",
+					"Do not answer the user question.",
+					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
+					"Use exactPhrases for quoted terms, named objects, titles, unusual wording, and names.",
+					"If prior retrieved chunks and citations are enough to answer from source evidence, stop with reason enough-evidence.",
+					"If prior evidence is not enough and another search is unlikely to help, stop with reason insufficient-evidence.",
 				].join(" "),
 			],
 			messages: [
 				{
 					role: "user",
-					content: query,
+					content: JSON.stringify({
+						query,
+						iteration,
+						citationHandles: citations.map(
+							(citation) => citation.citationHandle,
+						),
+						retrievedChunks: retrievalChunks.slice(0, 8).map((chunk) => ({
+							spanId: chunk.spanId,
+							sourceId: chunk.sourceId,
+							title: chunk.title,
+							location: `${chunk.section}, ${chunk.locator}`,
+							text: truncateForTrace(chunk.text),
+						})),
+					}),
 				},
 			],
 		});
-		const output = normalizeAgenticPlan(query, plan);
-		const traceStep: AiTraceStep = {
-			stage: "agentic-retrieval",
-			status: "ready",
-			model,
-			durationMs: elapsedMs(startedAt),
-			input: { query },
-			output,
-		};
-		logTraceStep(traceStep);
-
-		return {
-			...output,
-			traceStep,
-		};
-	} catch (error) {
-		const output = normalizeAgenticPlan(query, fallback);
-		const message =
-			error instanceof Error
-				? `Agentic retrieval planning failed: ${error.message}`
-				: "Agentic retrieval planning failed.";
-		const traceStep: AiTraceStep = {
-			stage: "agentic-retrieval",
-			status: "failed",
-			model,
-			durationMs: elapsedMs(startedAt),
-			input: { query },
-			error: message,
-			output,
-		};
-		logTraceStep(traceStep);
-
-		return {
-			...output,
-			traceStep,
-		};
-	}
+	};
 }
 
 function normalizePlanQueries(
@@ -336,53 +359,6 @@ function normalizePlanQueries(
 	}
 
 	return normalized.slice(0, 6);
-}
-
-function normalizeAgenticPlan(
-	originalQuery: string,
-	plan: {
-		exactPhrases: string[];
-		searchQueries: string[];
-		rationale: string;
-	},
-): {
-	exactPhrases: string[];
-	searchQueries: string[];
-	rationale: string;
-} {
-	return {
-		exactPhrases: normalizeExactPhrases([
-			...extractQuotedPhrases(originalQuery),
-			...plan.exactPhrases,
-		]),
-		searchQueries: normalizePlanQueries(originalQuery, plan.searchQueries),
-		rationale: plan.rationale.replace(/\s+/g, " ").trim().slice(0, 500),
-	};
-}
-
-function normalizeExactPhrases(phrases: string[]): string[] {
-	const seen = new Set<string>();
-	const normalized = [];
-
-	for (const phrase of phrases) {
-		const compact = phrase.replace(/\s+/g, " ").trim();
-		const key = compact.toLowerCase();
-
-		if (compact.length < 3 || seen.has(key)) {
-			continue;
-		}
-
-		seen.add(key);
-		normalized.push(compact.slice(0, 120));
-	}
-
-	return normalized.slice(0, 6);
-}
-
-function extractQuotedPhrases(query: string): string[] {
-	return [...query.matchAll(/["“”']([^"“”']{3,120})["“”']/g)].map((match) =>
-		(match[1] ?? "").trim(),
-	);
 }
 
 async function generateAiAnswer(
