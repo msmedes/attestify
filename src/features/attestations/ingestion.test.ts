@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { corpus } from "./corpus";
 import {
+	type AttestationCandidateDraft,
+	type AttestationExtractor,
+	type AttestationVerifier,
 	createAttestationCandidate,
+	createExtractionCacheKey,
 	createExtractionRun,
 	createSourceSnapshot,
 	createSourceSpanCandidate,
 	IngestionContractError,
+	InMemoryExtractionCache,
+	rejectAttestationCandidate,
+	runLazyExtractionLifecycle,
 	verifyAttestationCandidate,
 } from "./ingestion";
 
@@ -415,6 +422,248 @@ describe("ingestion contract", () => {
 			}).support.verifiedAgainstSource,
 		).toBe(true);
 	});
+
+	it("runs a deterministic extraction lifecycle with explicit promotion states", async () => {
+		const snapshot = createFixtureSnapshot();
+		const span = createFixtureSpan(snapshot);
+		const extractor = createFakeExtractor([
+			{
+				type: "utterance",
+				subject: "Barnardo",
+				predicate: "asks",
+				value: "who is there",
+				context: "opening watch",
+				anchorText: "who is there",
+			},
+			{
+				type: "utterance",
+				subject: "Hamlet",
+				predicate: "mentions",
+				value: "the mousetrap",
+				context: "",
+				anchorText: "the mousetrap",
+			},
+		]);
+		const verifier = createAnchorVerifier();
+
+		const result = await runLazyExtractionLifecycle({
+			cache: new InMemoryExtractionCache(),
+			extractor,
+			snapshot,
+			span,
+			startedAt: "2026-05-19T00:00:00.000Z",
+			verifiedAt: "2026-05-19T00:00:01.000Z",
+			verifier,
+		});
+
+		expect(result.records.map((record) => record.state)).toEqual([
+			"raw-candidate",
+			"verified-candidate",
+			"promoted",
+			"raw-candidate",
+			"rejected",
+		]);
+		expect(result.promotedAttestations).toHaveLength(1);
+		expect(result.promotedAttestations[0]).toMatchObject({
+			subject: "Barnardo",
+			support: {
+				verifiedAgainstSource: true,
+				method: "anchor-substring",
+			},
+		});
+		expect(
+			result.records.some(
+				(record) =>
+					record.state === "rejected" &&
+					record.reason === "anchor missing from source span",
+			),
+		).toBe(true);
+	});
+
+	it("reuses cached extraction results for unchanged snapshot, span, extractor, and settings", async () => {
+		const snapshot = createFixtureSnapshot();
+		const span = createFixtureSpan(snapshot);
+		let extractionCalls = 0;
+		const extractor = createFakeExtractor([
+			{
+				type: "utterance",
+				subject: "Barnardo",
+				predicate: "asks",
+				value: "who is there",
+				context: "opening watch",
+				anchorText: "who is there",
+			},
+		]);
+		const countedExtractor: AttestationExtractor = {
+			...extractor,
+			extract(input) {
+				extractionCalls += 1;
+				return extractor.extract(input);
+			},
+		};
+		const cache = new InMemoryExtractionCache();
+		const verifier = createAnchorVerifier();
+		const first = await runLazyExtractionLifecycle({
+			cache,
+			extractor: countedExtractor,
+			settings: { maxClaims: 2, mode: "focused", labels: ["a", "b"] },
+			snapshot,
+			span,
+			startedAt: "2026-05-19T00:00:00.000Z",
+			verifiedAt: "2026-05-19T00:00:01.000Z",
+			verifier,
+		});
+		const second = await runLazyExtractionLifecycle({
+			cache,
+			extractor: countedExtractor,
+			settings: { labels: ["a", "b"], mode: "focused", maxClaims: 2 },
+			snapshot,
+			span,
+			startedAt: "2026-05-19T00:05:00.000Z",
+			verifiedAt: "2026-05-19T00:05:01.000Z",
+			verifier,
+		});
+
+		expect(extractionCalls).toBe(1);
+		expect(second.records[0]).toMatchObject({
+			state: "cache-hit",
+			candidateCount: 1,
+		});
+		expect(second.promotedAttestations[0]?.candidateId).toBe(
+			first.promotedAttestations[0]?.candidateId,
+		);
+	});
+
+	it("invalidates extraction cache when snapshot, extractor version, or settings change", () => {
+		const snapshot = createFixtureSnapshot();
+		const changedSnapshot = createSourceSnapshot({
+			connectorId: "fixture-gutenberg",
+			externalSourceId: "1524",
+			kind: "play",
+			title: "Hamlet",
+			content: "Barnardo asks who is there. Francisco answers.",
+			snapshotVersion: "gutenberg-1524-revised",
+		});
+		const span = createFixtureSpan(snapshot);
+		const changedSpan = createSourceSpanCandidate({
+			snapshot: changedSnapshot,
+			spanKey: "act-1-scene-1-lines-1-2",
+			section: "Act 1 Scene 1",
+			locator: "Act 1, Scene 1, lines 1-2",
+			text: "Barnardo asks who is there.",
+		});
+		const alternateSpan = createSourceSpanCandidate({
+			snapshot,
+			spanKey: "act-1-scene-1-lines-3-4",
+			section: "Act 1 Scene 1",
+			locator: "Act 1, Scene 1, lines 3-4",
+			text: "Barnardo asks who is there.",
+		});
+		const baseKey = createExtractionCacheKey({
+			extractorId: "fake",
+			extractorVersion: "1.0.0",
+			settings: { maxClaims: 2, modes: ["strict", "broad"] },
+			snapshot,
+			span,
+		});
+
+		expect(
+			createExtractionCacheKey({
+				extractorId: "other-fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.1",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 3, modes: ["strict", "broad"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["broad", "strict"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot,
+				span: alternateSpan,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot: changedSnapshot,
+				span: changedSpan,
+			}).key,
+		).not.toBe(baseKey.key);
+	});
+
+	it("keeps rejected candidates out of promoted attestation output", async () => {
+		const snapshot = createFixtureSnapshot();
+		const span = createFixtureSpan(snapshot);
+		const extractor = createFakeExtractor([
+			{
+				type: "utterance",
+				subject: "Hamlet",
+				predicate: "mentions",
+				value: "the mousetrap",
+				context: "",
+				anchorText: "the mousetrap",
+			},
+		]);
+		const result = await runLazyExtractionLifecycle({
+			cache: new InMemoryExtractionCache(),
+			extractor,
+			snapshot,
+			span,
+			startedAt: "2026-05-19T00:00:00.000Z",
+			verifiedAt: "2026-05-19T00:00:01.000Z",
+			verifier: createAnchorVerifier(),
+		});
+
+		expect(result.promotedAttestations).toEqual([]);
+		expect(result.records.map((record) => record.state)).toEqual([
+			"raw-candidate",
+			"rejected",
+		]);
+		const rawRecord = result.records[0];
+
+		expect(rawRecord?.state).toBe("raw-candidate");
+		if (rawRecord?.state !== "raw-candidate") {
+			throw new Error("Expected raw candidate lifecycle record.");
+		}
+		expect(
+			rejectAttestationCandidate({
+				candidate: rawRecord.candidate,
+				reason: "not source-supported",
+			}).state,
+		).toBe("rejected");
+	});
 });
 
 function createFixtureSnapshot() {
@@ -426,4 +675,34 @@ function createFixtureSnapshot() {
 		content: "Barnardo asks who is there.",
 		snapshotVersion: "gutenberg-1524-static",
 	});
+}
+
+function createFixtureSpan(snapshot: ReturnType<typeof createFixtureSnapshot>) {
+	return createSourceSpanCandidate({
+		snapshot,
+		spanKey: "act-1-scene-1-lines-1-2",
+		section: "Act 1 Scene 1",
+		locator: "Act 1, Scene 1, lines 1-2",
+		text: "Barnardo asks who is there.",
+	});
+}
+
+function createFakeExtractor(
+	candidates: AttestationCandidateDraft[],
+): AttestationExtractor {
+	return {
+		extractorId: "fake-extractor",
+		extractorVersion: "1.0.0",
+		extract: () => candidates,
+	};
+}
+
+function createAnchorVerifier(): AttestationVerifier {
+	return {
+		verify({ candidate, span }) {
+			return span.text.includes(candidate.anchorText)
+				? { status: "verified", method: "anchor-substring" }
+				: { status: "rejected", reason: "anchor missing from source span" };
+		},
+	};
 }
