@@ -28,6 +28,7 @@ type SegmentedSpan = {
 	section: string;
 	locator: string;
 	text: string;
+	sourceOffset: number;
 };
 
 const EXTRACTOR_ID = "gutenberg-fixture-import";
@@ -45,12 +46,12 @@ export function buildGutenbergSourceDocument({
 	title,
 	updatedAt,
 }: GutenbergSourceInput): SourceDocument {
+	const content = normalizeCorpusBody(body);
 	const segmentedSpans = segmentText({
 		sourceId,
-		text: normalizeCorpusBody(body),
+		text: content,
 		title,
 	}).slice(0, maxSpans);
-	const content = segmentedSpans.map((span) => span.text).join("\n\n");
 	const attribution = `Project Gutenberg eBook #${gutenbergId}`;
 	const snapshot = createSourceSnapshot({
 		connectorId: "project-gutenberg",
@@ -76,6 +77,7 @@ export function buildGutenbergSourceDocument({
 			section: span.section,
 			locator: span.locator,
 			text: span.text,
+			sourceOffset: span.sourceOffset,
 		});
 
 		return {
@@ -130,6 +132,7 @@ function segmentText({
 	const spans: SegmentedSpan[] = [];
 	let section = "Front matter";
 	let paragraphIndex = 0;
+	let searchOffset = 0;
 	const paragraphs = text.split(/\n{2,}/);
 
 	for (const rawParagraph of paragraphs) {
@@ -155,6 +158,15 @@ function segmentText({
 		}
 
 		for (const chunk of splitLongParagraph(paragraph)) {
+			const sourceOffset = findSourceOffset(text, chunk, searchOffset);
+
+			if (sourceOffset < 0) {
+				throw new Error(
+					`Generated span was not found in source text: ${chunk.slice(0, 120)}`,
+				);
+			}
+
+			searchOffset = sourceOffset + chunk.length;
 			paragraphIndex += 1;
 			const compatibilitySpanId = `${sourceId}-${String(
 				paragraphIndex,
@@ -165,11 +177,26 @@ function segmentText({
 				section,
 				locator: `paragraph ${paragraphIndex}`,
 				text: chunk,
+				sourceOffset,
 			});
 		}
 	}
 
 	return spans;
+}
+
+function findSourceOffset(
+	text: string,
+	chunk: string,
+	searchOffset: number,
+): number {
+	const afterPreviousChunk = text.indexOf(chunk, searchOffset);
+
+	if (afterPreviousChunk >= 0) {
+		return afterPreviousChunk;
+	}
+
+	return text.indexOf(chunk);
 }
 
 function buildAttestations({
@@ -264,26 +291,31 @@ function splitLongParagraph(paragraph: string): string[] {
 		return [paragraph];
 	}
 
-	const sentences = splitSentences(paragraph);
 	const chunks = [];
-	let current = "";
+	let chunkStart = 0;
+	const matches = [...paragraph.matchAll(/[^.!?]+[.!?]+(?:["”’])?/g)];
 
-	for (const sentence of sentences) {
-		if (`${current} ${sentence}`.trim().length > MAX_PARAGRAPH_CHARS) {
-			if (current) {
-				chunks.push(current);
-			}
-			current = sentence;
-		} else {
-			current = `${current} ${sentence}`.trim();
+	for (const match of matches) {
+		if (typeof match.index !== "number") {
+			continue;
+		}
+
+		const sentenceEnd = match.index + match[0].length;
+		const candidate = paragraph.slice(chunkStart, sentenceEnd).trim();
+
+		if (candidate.length > MAX_PARAGRAPH_CHARS && match.index > chunkStart) {
+			chunks.push(paragraph.slice(chunkStart, match.index).trim());
+			chunkStart = match.index;
 		}
 	}
 
-	if (current) {
-		chunks.push(current);
+	const finalChunk = paragraph.slice(chunkStart).trim();
+
+	if (finalChunk) {
+		chunks.push(finalChunk);
 	}
 
-	return chunks;
+	return chunks.length > 0 ? chunks : [paragraph];
 }
 
 function splitSentences(text: string): string[] {

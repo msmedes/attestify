@@ -181,6 +181,25 @@ describe("ingestion contract", () => {
 		);
 	});
 
+	it("rejects span candidates whose source offset points at different snapshot text", () => {
+		const snapshot = createFixtureSnapshot();
+
+		expect(() =>
+			createSourceSpanCandidate({
+				snapshot,
+				spanKey: "line-1",
+				section: "Act 1",
+				locator: "Act 1, Scene 1",
+				text: "Barnardo",
+				sourceOffset: 1,
+			}),
+		).toThrow(
+			new IngestionContractError(
+				"Source span candidate offset does not match the source snapshot.",
+			),
+		);
+	});
+
 	it("keeps attestation candidates distinct from verified attestations", () => {
 		const snapshot = createFixtureSnapshot();
 		const span = createSourceSpanCandidate({

@@ -47,6 +47,7 @@ export type SourceSpanCandidateInput = {
 	section: string;
 	locator: string;
 	text: string;
+	sourceOffset?: number;
 };
 
 export type SourceSpanCandidate = {
@@ -133,6 +134,7 @@ export function createSourceSpanCandidate({
 	section,
 	snapshot,
 	spanKey,
+	sourceOffset,
 	text,
 }: SourceSpanCandidateInput): SourceSpanCandidate {
 	const normalizedSection = requireNonEmpty(section, "section");
@@ -140,7 +142,22 @@ export function createSourceSpanCandidate({
 	const normalizedSpanKey = requireNonEmpty(spanKey, "spanKey");
 	const normalizedText = requireSourceText(text, "text");
 
-	if (!snapshot.content.includes(normalizedText)) {
+	if (
+		sourceOffset !== undefined &&
+		snapshot.content.slice(
+			sourceOffset,
+			sourceOffset + normalizedText.length,
+		) !== normalizedText
+	) {
+		throw new IngestionContractError(
+			"Source span candidate offset does not match the source snapshot.",
+		);
+	}
+
+	if (
+		sourceOffset === undefined &&
+		!snapshot.content.includes(normalizedText)
+	) {
 		throw new IngestionContractError(
 			"Source span candidate text is not present in the source snapshot.",
 		);
