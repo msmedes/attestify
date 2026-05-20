@@ -60,6 +60,43 @@ const sourceDocumentSchema = z.object({
 	spans: z.array(sourceSpanSchema),
 }) satisfies z.ZodType<SourceDocument>;
 
+const citationIdentitySchema = z.discriminatedUnion("status", [
+	z.object({
+		status: z.literal("resolvable"),
+		legacyHandle: z.string(),
+		connectorId: z.string(),
+		externalSourceId: z.string(),
+		sourceSnapshot: z.object({
+			snapshotId: z.string(),
+			version: z.string().optional(),
+			contentHash: z.string().optional(),
+		}),
+		span: z.object({
+			spanId: z.string(),
+			legacySpanId: z.string(),
+			locator: z.string(),
+		}),
+		attestation: z.object({
+			attestationId: z.string(),
+			legacyAttestationId: z.string(),
+			extractionRunId: z.string().optional(),
+			extractorVersion: z.string().optional(),
+		}),
+	}),
+	z.object({
+		status: z.literal("legacy"),
+		legacyHandle: z.string(),
+		reason: z.string(),
+		span: z.object({
+			legacySpanId: z.string(),
+			locator: z.string(),
+		}),
+		attestation: z.object({
+			legacyAttestationId: z.string(),
+		}),
+	}),
+]);
+
 const citationUnitSchema = z.object({
 	attestation: attestationSchema,
 	source: z.object({
@@ -77,6 +114,8 @@ const citationUnitSchema = z.object({
 		text: z.string(),
 	}),
 	citationHandle: z.string(),
+	citationIdentity: citationIdentitySchema,
+	citationLabel: z.string(),
 	support: z.object({
 		verifiedAgainstSource: z.boolean(),
 		method: z.string(),

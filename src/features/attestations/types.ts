@@ -89,12 +89,50 @@ export type CitationUnit = {
 		text: string;
 	};
 	citationHandle: string;
+	citationIdentity: CitationIdentity;
+	citationLabel: string;
 	support: {
 		verifiedAgainstSource: boolean;
 		method: string;
 	};
 	score: number;
 };
+
+export type CitationIdentity =
+	| {
+			status: "resolvable";
+			legacyHandle: string;
+			connectorId: string;
+			externalSourceId: string;
+			sourceSnapshot: {
+				snapshotId: string;
+				version?: string;
+				contentHash?: string;
+			};
+			span: {
+				spanId: string;
+				legacySpanId: string;
+				locator: string;
+			};
+			attestation: {
+				attestationId: string;
+				legacyAttestationId: string;
+				extractionRunId?: string;
+				extractorVersion?: string;
+			};
+	  }
+	| {
+			status: "legacy";
+			legacyHandle: string;
+			reason: string;
+			span: {
+				legacySpanId: string;
+				locator: string;
+			};
+			attestation: {
+				legacyAttestationId: string;
+			};
+	  };
 
 export type RetrievalChunk = {
 	spanId: string;

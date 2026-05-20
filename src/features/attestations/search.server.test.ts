@@ -41,6 +41,16 @@ describe("searchCorpus", () => {
 		expect(
 			result.citations.some((unit) => unit.source.sourceId === "hamlet"),
 		).toBe(true);
+		expect(result.citations[0]?.citationHandle).toContain("#");
+		expect(result.citations[0]?.citationLabel).toBe("[1]");
+		expect(result.citations[0]?.citationIdentity).toMatchObject({
+			status: "resolvable",
+			connectorId: "project-gutenberg",
+			externalSourceId: "1524",
+			sourceSnapshot: {
+				version: "gutenberg-1524-utf8",
+			},
+		});
 	});
 
 	it("returns source-verified citations for a non-play source", async () => {

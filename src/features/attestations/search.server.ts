@@ -3,6 +3,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { LocalIndex, type MetadataTypes } from "vectra";
+import {
+	buildCitationIdentity,
+	citationLabel,
+	legacyCitationHandle,
+} from "./citation-identity";
 import { findSource, findSpan, getCorpusStats, listSpans } from "./corpus";
 import { tokenize } from "./embed";
 import {
@@ -149,7 +154,10 @@ export async function searchCorpusWithQueries({
 	const citations = selectCitationUnits(scoringQuery, citationCandidates, {
 		limit: citationLimit,
 		minScore: citationScoreFloor,
-	});
+	}).map((citation, index) => ({
+		...citation,
+		citationLabel: citationLabel(index),
+	}));
 
 	return {
 		query,
@@ -396,6 +404,8 @@ function buildCitationUnit({
 		throw new Error(`Missing source for span ${span.spanId}`);
 	}
 
+	const citationHandle = legacyCitationHandle({ attestation, span });
+
 	return {
 		attestation,
 		source: {
@@ -412,7 +422,9 @@ function buildCitationUnit({
 			locator: span.locator,
 			text: span.text,
 		},
-		citationHandle: `${attestation.id}#${span.spanId}`,
+		citationHandle,
+		citationIdentity: buildCitationIdentity({ attestation, source, span }),
+		citationLabel: "",
 		support: {
 			verifiedAgainstSource: isAnchorInSpan(attestation.anchorText, span.text),
 			method: "anchor substring check over source span",
