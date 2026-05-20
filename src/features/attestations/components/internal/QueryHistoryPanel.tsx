@@ -72,6 +72,12 @@ export function QueryHistoryPanel({
 										needs review
 									</span>
 								) : null}
+								{run.evidenceLoop ? (
+									<span className="tabular-nums">
+										loop {run.evidenceLoop.stopReason} /{" "}
+										{run.evidenceLoop.iterations} iterations
+									</span>
+								) : null}
 							</div>
 						</button>
 						<div className="flex justify-end px-4 pb-3">

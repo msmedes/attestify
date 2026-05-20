@@ -573,6 +573,7 @@ export type QueryRunSummary = {
 	citationCount: number;
 	retrievalQueryCount: number;
 	claimVerification?: ClaimVerificationSummary;
+	evidenceLoop?: EvidenceLoopSummary;
 };
 
 export type QueryRunDetail = QueryRunSummary & {
@@ -585,6 +586,15 @@ export type ClaimVerificationSummary = {
 	weak: number;
 	contradicted: number;
 	missing: number;
+};
+
+export type EvidenceLoopSummary = {
+	stopReason: EvidenceLoopStopReason;
+	iterations: number;
+	modelCalls: number;
+	retrievedSpans: number;
+	inspectedSpans: number;
+	extractionCalls: number;
 };
 
 export type AiAnswer =

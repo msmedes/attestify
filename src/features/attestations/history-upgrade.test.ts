@@ -177,6 +177,14 @@ describe("history response compatibility", () => {
 					contradicted: 1,
 					missing: 1,
 				},
+				evidenceLoop: {
+					stopReason: "enough-evidence",
+					iterations: 4,
+					modelCalls: 4,
+					retrievedSpans: 8,
+					inspectedSpans: 2,
+					extractionCalls: 1,
+				},
 			}),
 		).toMatchObject({
 			claimVerification: {
@@ -184,6 +192,11 @@ describe("history response compatibility", () => {
 				weak: 1,
 				contradicted: 1,
 				missing: 1,
+			},
+			evidenceLoop: {
+				stopReason: "enough-evidence",
+				iterations: 4,
+				extractionCalls: 1,
 			},
 		});
 	});

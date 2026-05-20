@@ -262,6 +262,23 @@ export const queryRunSummarySchema = z.object({
 			missing: z.number(),
 		})
 		.optional(),
+	evidenceLoop: z
+		.object({
+			stopReason: z.enum([
+				"enough-evidence",
+				"insufficient-evidence",
+				"budget-exhausted",
+				"invalid-action",
+				"tool-error",
+				"model-unavailable",
+			]),
+			iterations: z.number(),
+			modelCalls: z.number(),
+			retrievedSpans: z.number(),
+			inspectedSpans: z.number(),
+			extractionCalls: z.number(),
+		})
+		.optional(),
 }) satisfies z.ZodType<QueryRunSummary>;
 
 export const queryRunDetailSchema = queryRunSummarySchema.extend({

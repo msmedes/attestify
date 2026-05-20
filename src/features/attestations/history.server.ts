@@ -12,6 +12,7 @@ import type {
 	AiAnswerSegment,
 	CitationUnit,
 	ClaimVerificationSummary,
+	EvidenceLoopSummary,
 	QueryRunDetail,
 	QueryRunSummary,
 	SearchResponse,
@@ -253,6 +254,28 @@ function summarizeRun(run: QueryRunRow): QueryRunSummary {
 						} satisfies ClaimVerificationSummary,
 					)
 				: undefined,
+		evidenceLoop: summarizeEvidenceLoop(response),
+	};
+}
+
+function summarizeEvidenceLoop(
+	response: SearchResponse,
+): EvidenceLoopSummary | undefined {
+	const step = response.aiTrace?.steps.find(
+		(traceStep) => traceStep.stage === "evidence-loop",
+	);
+
+	if (!step) {
+		return undefined;
+	}
+
+	return {
+		stopReason: step.output.stopReason,
+		iterations: step.output.budgetUsage.iterations,
+		modelCalls: step.output.budgetUsage.modelCalls,
+		retrievedSpans: step.output.budgetUsage.retrievedSpans,
+		inspectedSpans: step.output.budgetUsage.inspectedSpans,
+		extractionCalls: step.output.budgetUsage.extractionCalls,
 	};
 }
 
