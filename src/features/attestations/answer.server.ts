@@ -90,6 +90,9 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 			query,
 			retrievalQueries: [query],
 		});
+		if (search.aiTrace) {
+			traceSteps.push(...search.aiTrace.steps);
+		}
 		traceSteps.push({
 			stage: "config",
 			status: "skipped",
@@ -334,7 +337,15 @@ async function generateAiAnswer(
 		citations,
 	});
 	const safeClaims = claimsSafeForAnswerSegments(verifiedClaims);
-	const modelSegments = selectModelSegments(safeClaims, citations);
+	const modelSegments =
+		safeClaims.length > 0
+			? selectModelSegments(safeClaims, citations)
+			: [
+					{
+						type: "text" as const,
+						text: "I could not verify the generated claims against the cited source evidence.",
+					},
+				];
 	const evidencePreview = citations.map((citation, index) => ({
 		index: index + 1,
 		citationHandle: citation.citationHandle,
