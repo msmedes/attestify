@@ -68,6 +68,24 @@ describe("claim verification", () => {
 		});
 	});
 
+	it("marks overlapping negated claims as contradicted with the default verifier", async () => {
+		const claims = await verifyAnswerClaims({
+			claims: [
+				{
+					text: "Hamlet does not use the play to catch the conscience of the King.",
+					citationHandles: ["att:1#span:1"],
+				},
+			],
+			citations: [citationUnit()],
+		});
+
+		expect(claims[0]?.verification).toMatchObject({
+			status: "contradicted",
+			method: "lexical-overlap-negation",
+		});
+		expect(claimsSafeForAnswerSegments(claims)).toEqual([]);
+	});
+
 	it.each([
 		"supported",
 		"weak",

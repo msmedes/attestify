@@ -62,6 +62,18 @@ export const lexicalClaimVerifier: ClaimVerifier = {
 			])
 			.join(" ");
 		const overlap = tokenOverlap(claim.text, evidenceText);
+		const negationConflict =
+			overlap >= 0.45 && hasNegation(claim.text) !== hasNegation(evidenceText);
+
+		if (negationConflict) {
+			return {
+				status: "contradicted",
+				method: "lexical-overlap-negation",
+				rationale:
+					"Claim and cited evidence overlap but differ on explicit negation.",
+				evidence,
+			};
+		}
 
 		return {
 			status: overlap >= 0.45 ? "supported" : "weak",
@@ -173,4 +185,10 @@ function tokenOverlap(query: string, target: string): number {
 	}
 
 	return overlap / queryTokens.size;
+}
+
+function hasNegation(text: string): boolean {
+	return /\b(?:no|not|never|without|cannot|can't|won't|doesn't|don't|didn't|isn't|aren't|wasn't|weren't)\b/i.test(
+		text,
+	);
 }
