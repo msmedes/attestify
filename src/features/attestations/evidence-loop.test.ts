@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
 	type EvidenceLoopPlanner,
 	evidencePlannerOutputSchema,
@@ -50,23 +51,25 @@ describe("runEvidenceLoop", () => {
 		});
 	});
 
-	it("accepts OpenAI-compatible planner outputs with null fields", async () => {
+	it("exposes an OpenAI-compatible planner schema with a nested action union", () => {
+		const schemaText = JSON.stringify(
+			z.toJSONSchema(evidencePlannerOutputSchema),
+		);
+
+		expect(schemaText).not.toContain('"oneOf"');
+		expect(schemaText).toContain('"anyOf"');
+		expect(
+			evidencePlannerOutputSchema.parse({ action: searchAction() }),
+		).toEqual({
+			action: searchAction(),
+		});
+	});
+
+	it("accepts planner actions unwrapped from the OpenAI-compatible response", async () => {
 		const result = await runEvidenceLoop({
 			planner: sequencePlanner([
-				{
-					type: "search",
-					queries: ["mousetrap Hamlet"],
-					exactPhrases: null,
-					spanIds: null,
-					reason: null,
-				},
-				{
-					type: "stop",
-					queries: null,
-					exactPhrases: null,
-					spanIds: null,
-					reason: "enough-evidence",
-				},
+				searchAction(),
+				{ type: "stop", reason: "enough-evidence" },
 			]),
 			query: "What is the mousetrap in Hamlet?",
 			tools: {
@@ -83,28 +86,6 @@ describe("runEvidenceLoop", () => {
 				queries: ["mousetrap Hamlet"],
 				exactPhrases: [],
 			},
-		});
-	});
-
-	it("accepts OpenAI-compatible planner outputs with omitted irrelevant fields", async () => {
-		expect(
-			evidencePlannerOutputSchema.parse({
-				type: "search",
-				queries: ["mousetrap Hamlet"],
-			}),
-		).toEqual({
-			type: "search",
-			queries: ["mousetrap Hamlet"],
-		});
-
-		expect(
-			evidencePlannerOutputSchema.parse({
-				type: "stop",
-				reason: "enough-evidence",
-			}),
-		).toEqual({
-			type: "stop",
-			reason: "enough-evidence",
 		});
 	});
 
@@ -624,6 +605,13 @@ describe("runEvidenceLoop", () => {
 
 function sequencePlanner(actions: unknown[]): EvidenceLoopPlanner {
 	return async ({ iteration }) => actions[iteration - 1] ?? actions.at(-1);
+}
+
+function searchAction() {
+	return {
+		type: "search" as const,
+		queries: ["mousetrap Hamlet"],
+	};
 }
 
 function fakeSearchResponse({

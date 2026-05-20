@@ -48,14 +48,12 @@ export const evidenceActionSchema = z.discriminatedUnion("type", [
 export type EvidenceAction = z.infer<typeof evidenceActionSchema>;
 
 export const evidencePlannerOutputSchema = z.object({
-	type: z.enum(["search", "extract", "inspect", "stop"]),
-	queries: z.array(z.string()).max(5).nullable().optional(),
-	exactPhrases: z.array(z.string()).max(6).nullable().optional(),
-	spanIds: z.array(z.string()).max(5).nullable().optional(),
-	reason: z
-		.enum(["enough-evidence", "insufficient-evidence"])
-		.nullable()
-		.optional(),
+	action: z.union([
+		searchActionSchema,
+		extractActionSchema,
+		inspectActionSchema,
+		stopActionSchema,
+	]),
 });
 
 export type EvidenceLoopBudgets = typeof DEFAULT_BUDGETS;
