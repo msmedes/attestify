@@ -425,6 +425,15 @@ function buildCitationUnit({
 		citationHandle,
 		citationIdentity: buildCitationIdentity({ attestation, source, span }),
 		citationLabel: "",
+		historyEvidence: {
+			status: "persisted",
+			sourceSnapshotId: source.ingestion?.snapshotId,
+			sourceTitle: source.title,
+			section: span.section,
+			locator: span.locator,
+			quote: attestation.anchorText,
+			sourceText: span.text,
+		},
 		support: {
 			verifiedAgainstSource: isAnchorInSpan(attestation.anchorText, span.text),
 			method: "anchor substring check over source span",

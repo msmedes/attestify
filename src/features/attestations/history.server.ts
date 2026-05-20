@@ -136,7 +136,7 @@ export function getQueryRunDetail(id: string): QueryRunDetail | null {
 	}
 }
 
-function upgradePersistedSearchResponse(value: unknown): SearchResponse {
+export function upgradePersistedSearchResponse(value: unknown): SearchResponse {
 	const response = value as SearchResponse;
 
 	return {
@@ -151,36 +151,66 @@ function upgradePersistedCitation(
 	citation: CitationUnit,
 	index: number,
 ): CitationUnit {
-	if (citation.citationIdentity && citation.citationLabel) {
-		return citation;
-	}
-
 	const source = findSource(citation.source.sourceId);
 	const span = findSpan(citation.span.spanId);
+	const citationIdentity =
+		citation.citationIdentity ??
+		(source && span
+			? buildCitationIdentity({
+					attestation: citation.attestation,
+					source,
+					span,
+				})
+			: {
+					status: "legacy" as const,
+					legacyHandle: citation.citationHandle,
+					reason:
+						"Persisted history citation could not be matched to current source metadata.",
+					span: {
+						legacySpanId: citation.span.spanId,
+						locator: citation.span.locator,
+					},
+					attestation: {
+						legacyAttestationId: citation.attestation.id,
+					},
+				});
 
 	return {
 		...citation,
-		citationIdentity:
-			source && span
-				? buildCitationIdentity({
-						attestation: citation.attestation,
-						source,
-						span,
-					})
-				: {
-						status: "legacy",
-						legacyHandle: citation.citationHandle,
-						reason:
-							"Persisted history citation could not be matched to current source metadata.",
-						span: {
-							legacySpanId: citation.span.spanId,
-							locator: citation.span.locator,
-						},
-						attestation: {
-							legacyAttestationId: citation.attestation.id,
-						},
-					},
+		citationIdentity,
 		citationLabel: citation.citationLabel || citationLabel(index),
+		historyEvidence:
+			citation.historyEvidence ??
+			buildPersistedEvidence(citation, citationIdentity),
+	};
+}
+
+function buildPersistedEvidence(
+	citation: CitationUnit,
+	citationIdentity: CitationUnit["citationIdentity"],
+): CitationUnit["historyEvidence"] {
+	if (citation.span.text && citation.attestation.anchorText) {
+		return {
+			status: "persisted",
+			sourceSnapshotId:
+				citationIdentity.status === "resolvable"
+					? citationIdentity.sourceSnapshot.snapshotId
+					: undefined,
+			sourceTitle: citation.source.title,
+			section: citation.span.section,
+			locator: citation.span.locator,
+			quote: citation.attestation.anchorText,
+			sourceText: citation.span.text,
+		};
+	}
+
+	return {
+		status: "unresolved",
+		reason:
+			"Persisted history citation is missing source text or quote evidence.",
+		sourceTitle: citation.source.title,
+		section: citation.span.section,
+		locator: citation.span.locator,
 	};
 }
 

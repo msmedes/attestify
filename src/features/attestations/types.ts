@@ -91,6 +91,7 @@ export type CitationUnit = {
 	citationHandle: string;
 	citationIdentity: CitationIdentity;
 	citationLabel: string;
+	historyEvidence?: CitationHistoryEvidence;
 	support: {
 		verifiedAgainstSource: boolean;
 		method: string;
@@ -132,6 +133,24 @@ export type CitationIdentity =
 			attestation: {
 				legacyAttestationId: string;
 			};
+	  };
+
+export type CitationHistoryEvidence =
+	| {
+			status: "persisted";
+			sourceSnapshotId?: string;
+			sourceTitle: string;
+			section: string;
+			locator: string;
+			quote: string;
+			sourceText: string;
+	  }
+	| {
+			status: "unresolved";
+			reason: string;
+			sourceTitle?: string;
+			section?: string;
+			locator?: string;
 	  };
 
 export type RetrievalChunk = {

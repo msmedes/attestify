@@ -116,6 +116,26 @@ const citationUnitSchema = z.object({
 	citationHandle: z.string(),
 	citationIdentity: citationIdentitySchema,
 	citationLabel: z.string(),
+	historyEvidence: z
+		.discriminatedUnion("status", [
+			z.object({
+				status: z.literal("persisted"),
+				sourceSnapshotId: z.string().optional(),
+				sourceTitle: z.string(),
+				section: z.string(),
+				locator: z.string(),
+				quote: z.string(),
+				sourceText: z.string(),
+			}),
+			z.object({
+				status: z.literal("unresolved"),
+				reason: z.string(),
+				sourceTitle: z.string().optional(),
+				section: z.string().optional(),
+				locator: z.string().optional(),
+			}),
+		])
+		.optional(),
 	support: z.object({
 		verifiedAgainstSource: z.boolean(),
 		method: z.string(),
