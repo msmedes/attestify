@@ -47,17 +47,19 @@ export function CitationCard({ citation }: CitationCardProps) {
 				<div
 					className={`flex items-center gap-2 leading-5 ${verificationClass(diagnosticState.status)}`}
 				>
-					{diagnosticState.status === "unresolved" ? (
-						<AlertTriangle aria-hidden="true" className="shrink-0" size={16} />
-					) : (
+					{diagnosticState.status === "resolved" ? (
 						<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
+					) : (
+						<AlertTriangle aria-hidden="true" className="shrink-0" size={16} />
 					)}
 					<span>
 						{diagnosticState.status === "unresolved"
 							? diagnosticState.description
-							: support.verifiedAgainstSource
-								? `${support.method}; ${diagnosticState.description}`
-								: "not verified"}
+							: diagnosticState.status === "stale"
+								? diagnosticState.description
+								: support.verifiedAgainstSource
+									? `${support.method}; ${diagnosticState.description}`
+									: "not verified"}
 					</span>
 				</div>
 
