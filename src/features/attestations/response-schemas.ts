@@ -120,6 +120,9 @@ const citationUnitSchema = z.object({
 		.discriminatedUnion("status", [
 			z.object({
 				status: z.literal("persisted"),
+				context: z
+					.enum(["current-response", "saved-history"])
+					.default("saved-history"),
 				sourceSnapshotId: z.string().optional(),
 				sourceTitle: z.string(),
 				section: z.string(),

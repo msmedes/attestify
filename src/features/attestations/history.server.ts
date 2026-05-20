@@ -167,9 +167,23 @@ function upgradePersistedCitation(
 		...citation,
 		citationIdentity,
 		citationLabel: citation.citationLabel || citationLabel(index),
-		historyEvidence:
+		historyEvidence: markSavedHistoryEvidence(
 			citation.historyEvidence ??
-			buildPersistedEvidence(citation, citationIdentity),
+				buildPersistedEvidence(citation, citationIdentity),
+		),
+	};
+}
+
+function markSavedHistoryEvidence(
+	historyEvidence: CitationUnit["historyEvidence"],
+): CitationUnit["historyEvidence"] {
+	if (historyEvidence?.status !== "persisted") {
+		return historyEvidence;
+	}
+
+	return {
+		...historyEvidence,
+		context: "saved-history",
 	};
 }
 
@@ -180,6 +194,7 @@ function buildPersistedEvidence(
 	if (citation.span.text && citation.attestation.anchorText) {
 		return {
 			status: "persisted",
+			context: "saved-history",
 			sourceSnapshotId:
 				citationIdentity.status === "resolvable"
 					? citationIdentity.sourceSnapshot.snapshotId

@@ -427,6 +427,7 @@ function buildCitationUnit({
 		citationLabel: "",
 		historyEvidence: {
 			status: "persisted",
+			context: "current-response",
 			sourceSnapshotId: source.ingestion?.snapshotId,
 			sourceTitle: source.title,
 			section: span.section,

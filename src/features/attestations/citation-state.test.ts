@@ -4,21 +4,19 @@ import type { CitationUnit } from "./types";
 
 describe("citation diagnostic state", () => {
 	it("marks current structured citations as resolved", () => {
-		expect(citationDiagnosticState(baseCitation()).status).toBe("resolved");
+		expect(
+			citationDiagnosticState({
+				...baseCitation(),
+				historyEvidence: persistedEvidence("current-response"),
+			}).status,
+		).toBe("resolved");
 	});
 
 	it("marks persisted history evidence as older snapshot", () => {
 		expect(
 			citationDiagnosticState({
 				...baseCitation(),
-				historyEvidence: {
-					status: "persisted",
-					sourceTitle: "Hamlet",
-					section: "Act 3",
-					locator: "paragraph 1",
-					quote: "The Mousetrap",
-					sourceText: "The Mousetrap appears in persisted evidence.",
-				},
+				historyEvidence: persistedEvidence("saved-history"),
 			}).status,
 		).toBe("stale");
 	});
@@ -89,5 +87,19 @@ function baseCitation(): CitationUnit {
 			method: "anchor substring check over source span",
 		},
 		score: 1,
+	};
+}
+
+function persistedEvidence(
+	context: "current-response" | "saved-history",
+): NonNullable<CitationUnit["historyEvidence"]> {
+	return {
+		status: "persisted",
+		context,
+		sourceTitle: "Hamlet",
+		section: "Act 3",
+		locator: "paragraph 1",
+		quote: "The Mousetrap",
+		sourceText: "The Mousetrap appears in persisted evidence.",
 	};
 }

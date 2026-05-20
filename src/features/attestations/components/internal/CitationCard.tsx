@@ -1,4 +1,4 @@
-import { CheckCircle2, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { citationDiagnosticState } from "../../citation-state";
 import type { CitationUnit } from "../../types";
 
@@ -44,8 +44,14 @@ export function CitationCard({ citation }: CitationCardProps) {
 			</div>
 
 			<div className="grid gap-3 p-3 text-sm">
-				<div className="flex items-center gap-2 text-[#3b6d65] leading-5">
-					<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
+				<div
+					className={`flex items-center gap-2 leading-5 ${verificationClass(diagnosticState.status)}`}
+				>
+					{diagnosticState.status === "unresolved" ? (
+						<AlertTriangle aria-hidden="true" className="shrink-0" size={16} />
+					) : (
+						<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
+					)}
 					<span>
 						{diagnosticState.status === "unresolved"
 							? diagnosticState.description
@@ -117,4 +123,18 @@ function stateBadgeClass(status: "resolved" | "stale" | "unresolved"): string {
 	}
 
 	return "border-[#3b6d65] bg-[#eef8f4] text-[#2f5c55]";
+}
+
+function verificationClass(
+	status: "resolved" | "stale" | "unresolved",
+): string {
+	if (status === "unresolved") {
+		return "text-[#7a2424]";
+	}
+
+	if (status === "stale") {
+		return "text-[#725018]";
+	}
+
+	return "text-[#3b6d65]";
 }

@@ -138,6 +138,7 @@ export type CitationIdentity =
 export type CitationHistoryEvidence =
 	| {
 			status: "persisted";
+			context: "current-response" | "saved-history";
 			sourceSnapshotId?: string;
 			sourceTitle: string;
 			section: string;

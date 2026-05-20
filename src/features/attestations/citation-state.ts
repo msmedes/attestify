@@ -38,11 +38,20 @@ export function citationDiagnosticState(
 	}
 
 	if (citation.historyEvidence?.status === "persisted") {
+		if (citation.historyEvidence.context === "saved-history") {
+			return {
+				status: "stale",
+				label: "Older snapshot",
+				description:
+					"Saved citation renders persisted evidence from the recorded answer run.",
+			};
+		}
+
 		return {
-			status: "stale",
-			label: "Older snapshot",
+			status: "resolved",
+			label: "Resolved",
 			description:
-				"Saved citation renders persisted evidence from the recorded answer run.",
+				"Citation identity resolves to source-backed evidence for this response.",
 		};
 	}
 
