@@ -5,8 +5,7 @@ import process from "node:process";
 import Database from "better-sqlite3";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { buildCitationIdentity, citationLabel } from "./citation-identity";
-import { findSource, findSpan } from "./corpus";
+import { citationLabel } from "./citation-identity";
 import { queryRuns } from "./history.schema";
 import type {
 	AiAnswerSegment,
@@ -151,29 +150,18 @@ function upgradePersistedCitation(
 	citation: CitationUnit,
 	index: number,
 ): CitationUnit {
-	const source = findSource(citation.source.sourceId);
-	const span = findSpan(citation.span.spanId);
-	const citationIdentity =
-		citation.citationIdentity ??
-		(source && span
-			? buildCitationIdentity({
-					attestation: citation.attestation,
-					source,
-					span,
-				})
-			: {
-					status: "legacy" as const,
-					legacyHandle: citation.citationHandle,
-					reason:
-						"Persisted history citation could not be matched to current source metadata.",
-					span: {
-						legacySpanId: citation.span.spanId,
-						locator: citation.span.locator,
-					},
-					attestation: {
-						legacyAttestationId: citation.attestation.id,
-					},
-				});
+	const citationIdentity = citation.citationIdentity ?? {
+		status: "legacy" as const,
+		legacyHandle: citation.citationHandle,
+		reason: "Persisted history citation predates structured citation identity.",
+		span: {
+			legacySpanId: citation.span.spanId,
+			locator: citation.span.locator,
+		},
+		attestation: {
+			legacyAttestationId: citation.attestation.id,
+		},
+	};
 
 	return {
 		...citation,

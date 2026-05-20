@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { upgradePersistedSearchResponse } from "./history.server";
 import { searchResponseSchema } from "./response-schemas";
-import type { CitationUnit, SearchResponse } from "./types";
+import type { SearchResponse } from "./types";
 
 describe("history response compatibility", () => {
 	it("accepts upgraded citations with structured identity and compact labels", () => {
@@ -98,12 +98,20 @@ describe("history response compatibility", () => {
 
 		expect(upgraded.citations[0]).toMatchObject({
 			citationLabel: "[1]",
+			citationIdentity: {
+				status: "legacy",
+				reason:
+					"Persisted history citation predates structured citation identity.",
+			},
 			historyEvidence: {
 				status: "persisted",
 				sourceTitle: "Hamlet",
 				quote: "The Mousetrap",
 				sourceText: "The Mousetrap appears in the saved response.",
 			},
+		});
+		expect(upgraded.citations[0]?.historyEvidence).not.toMatchObject({
+			sourceSnapshotId: expect.any(String),
 		});
 		expect(searchResponseSchema.parse(upgraded).citations[0]).toMatchObject({
 			historyEvidence: {
@@ -147,7 +155,7 @@ describe("history response compatibility", () => {
 	});
 });
 
-function legacyCitation(): CitationUnit {
+function legacyCitation(): SearchResponse["citations"][number] {
 	return {
 		attestation: {
 			id: "att:hamlet-00001:passage",
@@ -173,22 +181,10 @@ function legacyCitation(): CitationUnit {
 		},
 		citationHandle: "att:hamlet-00001:passage#hamlet-00001",
 		citationLabel: "",
-		citationIdentity: {
-			status: "legacy",
-			legacyHandle: "att:hamlet-00001:passage#hamlet-00001",
-			reason: "Legacy fixture",
-			span: {
-				legacySpanId: "hamlet-00001",
-				locator: "paragraph 1",
-			},
-			attestation: {
-				legacyAttestationId: "att:hamlet-00001:passage",
-			},
-		},
 		support: {
 			verifiedAgainstSource: true,
 			method: "anchor substring check over source span",
 		},
 		score: 1,
-	};
+	} as SearchResponse["citations"][number];
 }

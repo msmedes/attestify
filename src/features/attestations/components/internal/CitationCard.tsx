@@ -6,7 +6,15 @@ type CitationCardProps = {
 };
 
 export function CitationCard({ citation }: CitationCardProps) {
-	const { attestation, citationIdentity, source, span, support } = citation;
+	const {
+		attestation,
+		citationIdentity,
+		historyEvidence,
+		source,
+		span,
+		support,
+	} = citation;
+	const isUnresolvedHistoryEvidence = historyEvidence?.status === "unresolved";
 
 	return (
 		<article
@@ -32,18 +40,32 @@ export function CitationCard({ citation }: CitationCardProps) {
 				<div className="flex items-center gap-2 text-[#3b6d65] leading-5">
 					<CheckCircle2 aria-hidden="true" className="shrink-0" size={16} />
 					<span>
-						{support.verifiedAgainstSource ? support.method : "not verified"}
+						{isUnresolvedHistoryEvidence
+							? historyEvidence.reason
+							: support.verifiedAgainstSource
+								? support.method
+								: "not verified"}
 					</span>
 				</div>
 
-				<blockquote className="border-[#c14f2f] border-l-4 bg-[#fffaf2] p-3 leading-6">
-					{attestation.anchorText}
-				</blockquote>
+				{isUnresolvedHistoryEvidence ? (
+					<div className="border border-[#9f2f2f] bg-[#fff7f4] p-3 text-[#7a2424] leading-6">
+						Citation evidence is unresolved for this saved run.
+					</div>
+				) : (
+					<blockquote className="border-[#c14f2f] border-l-4 bg-[#fffaf2] p-3 leading-6">
+						{historyEvidence?.status === "persisted"
+							? historyEvidence.quote
+							: attestation.anchorText}
+					</blockquote>
+				)}
 
 				<div className="flex items-start gap-2 text-[#6f716d] leading-5">
 					<FileText aria-hidden="true" className="mt-0.5 shrink-0" size={16} />
 					<span>
-						{source.title}, {span.section}, {span.locator}
+						{historyEvidence?.status === "persisted"
+							? `${historyEvidence.sourceTitle}, ${historyEvidence.section}, ${historyEvidence.locator}`
+							: `${source.title}, ${span.section}, ${span.locator}`}
 					</span>
 				</div>
 
