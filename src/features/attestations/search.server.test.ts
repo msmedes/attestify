@@ -91,6 +91,25 @@ describe("searchCorpus", () => {
 		).toBe(true);
 	});
 
+	it("runs bounded lazy expansion on the default search path", async () => {
+		const result = await searchCorpusWithQueries({
+			query: "What is the mousetrap in Hamlet?",
+			retrievalQueries: ["mousetrap Hamlet"],
+			chunkLimit: 3,
+		});
+		const lazyTrace = result.aiTrace?.steps.find(
+			(step) => step.stage === "lazy-expansion",
+		);
+
+		expect(lazyTrace).toMatchObject({
+			input: { maxSpans: 2 },
+			output: {
+				attempts: [expect.any(Object), expect.any(Object)],
+				skipped: [expect.objectContaining({ reason: "max-spans" })],
+			},
+		});
+	});
+
 	it("reruns citation selection after bounded lazy expansion promotes attestations", async () => {
 		const result = await searchCorpusWithQueries({
 			query:

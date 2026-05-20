@@ -22,6 +22,7 @@ import {
 	type AttestationVerifier,
 	type ExtractionCache,
 	type ExtractionSettings,
+	InMemoryExtractionCache,
 	type LazyExtractionLifecycleResult,
 	runLazyExtractionLifecycle,
 } from "./ingestion";
@@ -65,8 +66,10 @@ const DEFAULT_CHUNK_LIMIT = 5;
 const DEFAULT_CITATION_LIMIT = MAX_CITATIONS;
 const MIN_CITATION_SCORE = 0.14;
 const RELATIVE_CITATION_FLOOR = 0.45;
+const DEFAULT_LAZY_EXPANSION_SPAN_LIMIT = 2;
 
 let ensureIndexPromise: Promise<void> | null = null;
+const defaultLazyExpansionCache = new InMemoryExtractionCache();
 
 type SearchCorpusWithQueriesOptions = {
 	query: string;
@@ -74,7 +77,7 @@ type SearchCorpusWithQueriesOptions = {
 	chunkLimit?: number;
 	citationLimit?: number;
 	citationScoreFloor?: number;
-	lazyExpansion?: LazyExpansionOptions;
+	lazyExpansion?: LazyExpansionOptions | false;
 };
 
 export type LazyExpansionOptions = {
@@ -154,9 +157,13 @@ export async function searchCorpusWithQueries({
 		.sort((left, right) => right.score - left.score)
 		.slice(0, chunkLimit);
 
-	const lazyExpansionResult = lazyExpansion
+	const effectiveLazyExpansion =
+		lazyExpansion === false
+			? null
+			: (lazyExpansion ?? createDefaultLazyExpansionOptions());
+	const lazyExpansionResult = effectiveLazyExpansion
 		? await runLazyExpansion({
-				options: lazyExpansion,
+				options: effectiveLazyExpansion,
 				retrievalChunks,
 			})
 		: null;
@@ -206,6 +213,19 @@ export async function searchCorpusWithQueries({
 		citations,
 		retrievalChunks,
 		corpusStats: getCorpusStats(),
+	};
+}
+
+export function createDefaultLazyExpansionOptions(): LazyExpansionOptions {
+	return {
+		cache: defaultLazyExpansionCache,
+		extractor: deterministicSpanSentenceExtractor,
+		verifier: anchorSubstringVerifier,
+		settings: {
+			maxCandidates: 1,
+			mode: "deterministic-span-sentence",
+		},
+		maxSpans: DEFAULT_LAZY_EXPANSION_SPAN_LIMIT,
 	};
 }
 
@@ -289,6 +309,44 @@ async function runLazyExpansion({
 			},
 		},
 	};
+}
+
+const deterministicSpanSentenceExtractor: AttestationExtractor = {
+	extractorId: "deterministic-span-sentence",
+	extractorVersion: "1.0.0",
+	extract({ snapshot, span }) {
+		const anchorText = firstSentence(span.text);
+
+		if (!anchorText) {
+			return [];
+		}
+
+		return [
+			{
+				type: "passage",
+				subject: snapshot.title,
+				predicate: "contains source-supported passage",
+				value: anchorText,
+				context: span.section,
+				anchorText,
+			},
+		];
+	},
+};
+
+const anchorSubstringVerifier: AttestationVerifier = {
+	verify({ candidate, span }) {
+		return span.text.includes(candidate.anchorText)
+			? { status: "verified", method: "anchor-substring" }
+			: { status: "rejected", reason: "anchor missing from source span" };
+	},
+};
+
+function firstSentence(text: string): string | null {
+	const sentence = text.match(/[^.!?]+[.!?]+(?:["”’])?/)?.[0]?.trim();
+	const anchorText = sentence && sentence.length >= 30 ? sentence : text.trim();
+
+	return anchorText || null;
 }
 
 function toLifecycleInput(
