@@ -96,6 +96,9 @@ export type LazyExpansionOptions = {
 	verifiedAt?: string;
 };
 
+export type LazyExtractionAttemptSummary =
+	LazyExpansionTraceStep["output"]["attempts"][number];
+
 export async function searchCorpus(
 	query: string,
 	queryMode: QueryMode = "hybrid",
@@ -239,37 +242,19 @@ export async function searchCorpusWithQueries({
 	});
 	const promotedBySpanId = lazyExpansionResult?.promotedBySpanId ?? new Map();
 	const citationStartedAt = performance.now();
-	const citationCandidates = retrievalChunks
-		.flatMap((chunk) => {
-			const span = findSpan(chunk.spanId);
-			const source = findSource(chunk.sourceId);
-
-			if (!span || !source) {
-				return [];
-			}
-
-			const citationSpan: SourceSpan = {
-				...span,
-				attestations: [
-					...span.attestations,
-					...(promotedBySpanId.get(span.spanId) ?? []),
-				],
-			};
-
-			return citationSpan.attestations.map((attestation) =>
-				buildCitationUnit({
-					attestation,
-					span: citationSpan,
-					query: scoringQuery,
-					retrievalScore: chunk.score,
-				}),
-			);
-		})
-		.sort((left, right) => right.score - left.score);
-	const citations = selectCitationUnits(scoringQuery, citationCandidates, {
-		limit: citationLimit,
-		minScore: citationScoreFloor,
-	}).map((citation, index) => ({
+	const citationCandidates = buildCitationCandidatesFromChunks({
+		promotedBySpanId,
+		query: scoringQuery,
+		retrievalChunks,
+	});
+	const citations = selectVerifiedCitationUnits(
+		scoringQuery,
+		citationCandidates,
+		{
+			limit: citationLimit,
+			minScore: citationScoreFloor,
+		},
+	).map((citation, index) => ({
 		...citation,
 		citationLabel: citationLabel(index),
 	}));
@@ -331,39 +316,32 @@ export function createDefaultLazyExpansionOptions(): LazyExpansionOptions {
 	};
 }
 
-async function runLazyExpansion({
+export async function runLazyExtractionForSpanIds({
 	options,
-	retrievalChunks,
+	spanIds,
 }: {
 	options: LazyExpansionOptions;
-	retrievalChunks: RetrievalChunk[];
+	spanIds: string[];
 }): Promise<{
 	promotedBySpanId: Map<string, Attestation[]>;
-	traceStep: LazyExpansionTraceStep;
+	attempts: LazyExtractionAttemptSummary[];
+	skipped: LazyExpansionTraceStep["output"]["skipped"];
+	promotedAttestationIds: string[];
 }> {
-	const maxSpans = Math.max(0, Math.floor(options.maxSpans));
 	const promotedBySpanId = new Map<string, Attestation[]>();
-	const attempts: LazyExpansionTraceStep["output"]["attempts"] = [];
+	const attempts: LazyExtractionAttemptSummary[] = [];
 	const skipped: LazyExpansionTraceStep["output"]["skipped"] = [];
 	const promotedAttestationIds: string[] = [];
 
-	for (const chunk of retrievalChunks) {
-		if (attempts.length >= maxSpans) {
-			skipped.push({
-				spanId: chunk.spanId,
-				reason: "max-spans",
-			});
-			continue;
-		}
-
-		const source = findSource(chunk.sourceId);
-		const span = findSpan(chunk.spanId);
+	for (const spanId of spanIds) {
+		const sourceSpan = findSpan(spanId);
+		const source = sourceSpan ? findSource(sourceSpan.sourceId) : undefined;
 		const lifecycleInput =
-			source && span ? toLifecycleInput(source, span) : null;
+			source && sourceSpan ? toLifecycleInput(source, sourceSpan) : null;
 
-		if (!source || !span || !lifecycleInput) {
+		if (!source || !sourceSpan || !lifecycleInput) {
 			skipped.push({
-				spanId: chunk.spanId,
+				spanId,
 				reason: "missing-structured-ingestion",
 			});
 			continue;
@@ -384,7 +362,7 @@ async function runLazyExpansion({
 		);
 
 		if (promoted.length > 0) {
-			promotedBySpanId.set(span.spanId, promoted);
+			promotedBySpanId.set(sourceSpan.spanId, promoted);
 			promotedAttestationIds.push(
 				...lifecycle.promotedAttestations.map(
 					(attestation) => attestation.attestationId,
@@ -392,11 +370,98 @@ async function runLazyExpansion({
 			);
 		}
 
-		attempts.push(toLazyExpansionAttempt(span.spanId, lifecycle));
+		attempts.push(toLazyExpansionAttempt(sourceSpan.spanId, lifecycle));
 	}
 
 	return {
+		attempts,
+		promotedAttestationIds,
 		promotedBySpanId,
+		skipped,
+	};
+}
+
+export function buildCitationCandidatesFromChunks({
+	promotedBySpanId = new Map(),
+	query,
+	retrievalChunks,
+}: {
+	promotedBySpanId?: Map<string, Attestation[]>;
+	query: string;
+	retrievalChunks: RetrievalChunk[];
+}): CitationUnit[] {
+	return retrievalChunks
+		.flatMap((chunk) => {
+			const span = findSpan(chunk.spanId);
+			const source = findSource(chunk.sourceId);
+
+			if (!span || !source) {
+				return [];
+			}
+
+			const citationSpan: SourceSpan = {
+				...span,
+				attestations: [
+					...span.attestations,
+					...(promotedBySpanId.get(span.spanId) ?? []),
+				],
+			};
+
+			return citationSpan.attestations.map((attestation) =>
+				buildCitationUnit({
+					attestation,
+					span: citationSpan,
+					query,
+					retrievalScore: chunk.score,
+				}),
+			);
+		})
+		.sort((left, right) => right.score - left.score);
+}
+
+export function selectVerifiedCitationUnits(
+	query: string,
+	candidates: CitationUnit[],
+	options: {
+		limit: number;
+		minScore: number;
+	},
+): CitationUnit[] {
+	return selectCitationUnits(query, candidates, options);
+}
+
+async function runLazyExpansion({
+	options,
+	retrievalChunks,
+}: {
+	options: LazyExpansionOptions;
+	retrievalChunks: RetrievalChunk[];
+}): Promise<{
+	promotedBySpanId: Map<string, Attestation[]>;
+	traceStep: LazyExpansionTraceStep;
+}> {
+	const maxSpans = Math.max(0, Math.floor(options.maxSpans));
+	const skipped: LazyExpansionTraceStep["output"]["skipped"] = [];
+	const spanIdsToExtract: string[] = [];
+
+	for (const chunk of retrievalChunks) {
+		if (spanIdsToExtract.length >= maxSpans) {
+			skipped.push({
+				spanId: chunk.spanId,
+				reason: "max-spans",
+			});
+			continue;
+		}
+
+		spanIdsToExtract.push(chunk.spanId);
+	}
+	const extraction = await runLazyExtractionForSpanIds({
+		options,
+		spanIds: spanIdsToExtract,
+	});
+
+	return {
+		promotedBySpanId: extraction.promotedBySpanId,
 		traceStep: {
 			stage: "lazy-expansion",
 			status: maxSpans > 0 ? "ready" : "skipped",
@@ -405,9 +470,9 @@ async function runLazyExpansion({
 				retrievedSpanIds: retrievalChunks.map((chunk) => chunk.spanId),
 			},
 			output: {
-				attempts,
-				promotedAttestationIds,
-				skipped,
+				attempts: extraction.attempts,
+				promotedAttestationIds: extraction.promotedAttestationIds,
+				skipped: [...skipped, ...extraction.skipped],
 			},
 		},
 	};

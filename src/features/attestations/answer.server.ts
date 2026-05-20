@@ -14,7 +14,13 @@ import {
 	runEvidenceLoop,
 } from "./evidence-loop";
 import { tryRecordQueryRun } from "./history.server";
-import { searchCorpusWithQueries } from "./search.server";
+import {
+	buildCitationCandidatesFromChunks,
+	createDefaultLazyExpansionOptions,
+	runLazyExtractionForSpanIds,
+	searchCorpusWithQueries,
+	selectVerifiedCitationUnits,
+} from "./search.server";
 import type {
 	AiAnswer,
 	AiAnswerSegment,
@@ -194,6 +200,35 @@ async function runAgenticEvidenceLoop(
 		planner: createModelEvidencePlanner(),
 		query,
 		tools: {
+			extract: async ({ search, spanIds }) => {
+				const extraction = await runLazyExtractionForSpanIds({
+					options: createDefaultLazyExpansionOptions(),
+					spanIds,
+				});
+				const candidates = buildCitationCandidatesFromChunks({
+					promotedBySpanId: extraction.promotedBySpanId,
+					query,
+					retrievalChunks: search.retrievalChunks,
+				});
+				const citations = selectVerifiedCitationUnits(query, candidates, {
+					limit: 30,
+					minScore: 0,
+				});
+
+				return {
+					attempts: extraction.attempts,
+					citations,
+					promotedAttestationIds: extraction.promotedAttestationIds,
+					rejectedCandidateCount: extraction.attempts.reduce(
+						(count, attempt) => count + attempt.rejections,
+						0,
+					),
+					verifiedCandidateCount: extraction.attempts.reduce(
+						(count, attempt) => count + attempt.verifiedCandidates,
+						0,
+					),
+				};
+			},
 			inspect: async ({ spanIds }) =>
 				spanIds.flatMap((spanId) => {
 					const span = findSpan(spanId);
@@ -327,10 +362,11 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 			systemPrompts: [
 				[
 					"You drive a bounded source-evidence loop.",
-					"You may request one typed action: search, inspect, or stop.",
+					"You may request one typed action: search, inspect, extract, or stop.",
 					"Do not answer the user question.",
 					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
 					"After a search, inspect only promising span IDs when seeing the full span text could help choose a narrower follow-up search.",
+					"Request extract only for retrieved or inspected span IDs where host-verified promotion could improve citation candidates.",
 					"Use exactPhrases for quoted terms, named objects, titles, unusual wording, and names.",
 					"If prior retrieved chunks and citations are enough to answer from source evidence, stop with reason enough-evidence.",
 					"If prior evidence is not enough and another search is unlikely to help, stop with reason insufficient-evidence.",

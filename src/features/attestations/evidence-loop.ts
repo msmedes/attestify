@@ -11,6 +11,7 @@ import type {
 const DEFAULT_BUDGETS = {
 	maxIterations: 4,
 	maxModelCalls: 4,
+	maxExtractionCalls: 2,
 	maxRetrievedSpans: 80,
 	maxInspectedSpans: 8,
 	maxElapsedMs: 8_000,
@@ -32,8 +33,14 @@ const inspectActionSchema = z.object({
 	spanIds: z.array(z.string()).min(1).max(5),
 });
 
+const extractActionSchema = z.object({
+	type: z.literal("extract"),
+	spanIds: z.array(z.string()).min(1).max(3),
+});
+
 export const evidenceActionSchema = z.discriminatedUnion("type", [
 	searchActionSchema,
+	extractActionSchema,
 	inspectActionSchema,
 	stopActionSchema,
 ]);
@@ -57,12 +64,31 @@ export type EvidenceLoopPlanner = (
 ) => Promise<unknown>;
 
 export type EvidenceLoopTools = {
+	extract: (input: {
+		search: SearchResponse;
+		spanIds: string[];
+	}) => Promise<ExtractionEvidenceResult>;
 	inspect: (input: { spanIds: string[] }) => Promise<InspectedEvidenceSpan[]>;
 	search: (input: {
 		query: string;
 		queries: string[];
 		exactPhrases: string[];
 	}) => Promise<SearchResponse>;
+};
+
+export type ExtractionEvidenceResult = {
+	attempts: Array<{
+		spanId: string;
+		cacheHit: boolean;
+		rawCandidates: number;
+		verifiedCandidates: number;
+		promotions: number;
+		rejections: number;
+	}>;
+	citations: CitationUnit[];
+	promotedAttestationIds: string[];
+	rejectedCandidateCount: number;
+	verifiedCandidateCount: number;
 };
 
 export type InspectedEvidenceSpan = {
@@ -98,6 +124,7 @@ export async function runEvidenceLoop({
 	const searchTraceSteps: AiTraceStep[] = [];
 	let search: SearchResponse | null = null;
 	let stopReason: EvidenceLoopStopReason | null = null;
+	let extractionCalls = 0;
 	let modelCalls = 0;
 	let retrievedSpans = 0;
 	const inspectedSpans = new Map<string, InspectedEvidenceSpan>();
@@ -105,6 +132,7 @@ export async function runEvidenceLoop({
 	for (let iteration = 1; iteration <= budgets.maxIterations; iteration += 1) {
 		const budgetUsage = currentBudgetUsage({
 			startedAt,
+			extractionCalls,
 			inspectedSpans: inspectedSpans.size,
 			iterations: iteration - 1,
 			modelCalls,
@@ -163,6 +191,7 @@ export async function runEvidenceLoop({
 			isBudgetExhausted(
 				currentBudgetUsage({
 					startedAt,
+					extractionCalls,
 					inspectedSpans: inspectedSpans.size,
 					iterations: iteration - 1,
 					modelCalls,
@@ -194,6 +223,17 @@ export async function runEvidenceLoop({
 			});
 			break;
 		}
+		if (action.type === "extract" && action.spanIds.length === 0) {
+			stopReason = "invalid-action";
+			iterations.push({
+				iteration,
+				requestedAction,
+				rejectedAction: {
+					reason: "Extract action contained no non-empty span IDs.",
+				},
+			});
+			break;
+		}
 		if (action.type === "inspect" && action.spanIds.length === 0) {
 			stopReason = "invalid-action";
 			iterations.push({
@@ -205,26 +245,42 @@ export async function runEvidenceLoop({
 			});
 			break;
 		}
-		if (action.type === "inspect") {
+		if (action.type === "inspect" || action.type === "extract") {
 			const availableSpanIds = new Set([
 				...(search?.retrievalChunks.map((chunk) => chunk.spanId) ?? []),
 				...inspectedSpans.keys(),
 			]);
-			const repeatedSpanIds = action.spanIds.filter((spanId) =>
-				inspectedSpans.has(spanId),
-			);
 			const unknownSpanIds = action.spanIds.filter(
 				(spanId) => !availableSpanIds.has(spanId),
 			);
 
-			if (repeatedSpanIds.length > 0) {
+			if (action.type === "inspect") {
+				const repeatedSpanIds = action.spanIds.filter((spanId) =>
+					inspectedSpans.has(spanId),
+				);
+
+				if (repeatedSpanIds.length > 0) {
+					stopReason = "invalid-action";
+					iterations.push({
+						iteration,
+						requestedAction,
+						validatedAction: traceAction(action),
+						rejectedAction: {
+							reason: `Inspect action repeated already inspected span IDs: ${repeatedSpanIds.join(", ")}.`,
+						},
+					});
+					break;
+				}
+			}
+
+			if (action.type === "extract" && !search) {
 				stopReason = "invalid-action";
 				iterations.push({
 					iteration,
 					requestedAction,
 					validatedAction: traceAction(action),
 					rejectedAction: {
-						reason: `Inspect action repeated already inspected span IDs: ${repeatedSpanIds.join(", ")}.`,
+						reason: "Extract action requires retrieved evidence.",
 					},
 				});
 				break;
@@ -259,6 +315,7 @@ export async function runEvidenceLoop({
 		if (action.type === "stop") {
 			const currentUsage = currentBudgetUsage({
 				startedAt,
+				extractionCalls,
 				inspectedSpans: inspectedSpans.size,
 				iterations: iteration,
 				modelCalls,
@@ -275,9 +332,79 @@ export async function runEvidenceLoop({
 			break;
 		}
 
+		if (action.type === "extract") {
+			const extractBudgetUsage = currentBudgetUsage({
+				startedAt,
+				extractionCalls: extractionCalls + action.spanIds.length,
+				inspectedSpans: inspectedSpans.size,
+				iterations: iteration,
+				modelCalls,
+				retrievedSpans,
+			});
+			if (isBudgetExhausted(extractBudgetUsage, budgets)) {
+				stopReason = "budget-exhausted";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason: "Extract action exceeded evidence-loop budget.",
+					},
+				});
+				break;
+			}
+
+			try {
+				const extraction = await tools.extract({
+					search: search as SearchResponse,
+					spanIds: action.spanIds,
+				});
+				extractionCalls += action.spanIds.length;
+				search = {
+					...(search as SearchResponse),
+					citations: extraction.citations,
+				};
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					resultSummary: {
+						chunks: search.retrievalChunks.length,
+						citations: search.citations.length,
+						citationHandles: search.citations.map(
+							(citation) => citation.citationHandle,
+						),
+						extraction: {
+							attemptedSpanIds: action.spanIds,
+							promotedAttestationIds: extraction.promotedAttestationIds,
+							rejectedCandidateCount: extraction.rejectedCandidateCount,
+							verifiedCandidateCount: extraction.verifiedCandidateCount,
+						},
+					},
+				});
+			} catch (error) {
+				stopReason = "tool-error";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason:
+							error instanceof Error
+								? `Extraction failed: ${error.message}`
+								: "Extraction failed.",
+					},
+				});
+				break;
+			}
+
+			continue;
+		}
+
 		if (action.type === "inspect") {
 			const inspectBudgetUsage = currentBudgetUsage({
 				startedAt,
+				extractionCalls,
 				iterations: iteration,
 				inspectedSpans: inspectedSpans.size + action.spanIds.length,
 				modelCalls,
@@ -340,6 +467,7 @@ export async function runEvidenceLoop({
 				isBudgetExhausted(
 					currentBudgetUsage({
 						startedAt,
+						extractionCalls,
 						inspectedSpans: inspectedSpans.size,
 						iterations: iteration,
 						modelCalls,
@@ -398,6 +526,7 @@ export async function runEvidenceLoop({
 			isBudgetExhausted(
 				currentBudgetUsage({
 					startedAt,
+					extractionCalls,
 					inspectedSpans: inspectedSpans.size,
 					iterations: iteration,
 					modelCalls,
@@ -413,6 +542,7 @@ export async function runEvidenceLoop({
 
 	const budgetUsage = currentBudgetUsage({
 		startedAt,
+		extractionCalls,
 		iterations: iterations.length,
 		inspectedSpans: inspectedSpans.size,
 		modelCalls,
@@ -455,12 +585,14 @@ export async function runEvidenceLoop({
 
 function currentBudgetUsage({
 	startedAt,
+	extractionCalls,
 	inspectedSpans,
 	iterations,
 	modelCalls,
 	retrievedSpans,
 }: {
 	startedAt: number;
+	extractionCalls?: number;
 	inspectedSpans?: number;
 	iterations: number;
 	modelCalls: number;
@@ -468,6 +600,7 @@ function currentBudgetUsage({
 }): EvidenceLoopTraceStep["output"]["budgetUsage"] {
 	return {
 		iterations,
+		extractionCalls: extractionCalls ?? 0,
 		modelCalls,
 		retrievedSpans,
 		inspectedSpans: inspectedSpans ?? 0,
@@ -481,6 +614,7 @@ function isBudgetExhausted(
 ): boolean {
 	return (
 		usage.modelCalls > budgets.maxModelCalls ||
+		usage.extractionCalls > budgets.maxExtractionCalls ||
 		usage.retrievedSpans > budgets.maxRetrievedSpans ||
 		usage.inspectedSpans > budgets.maxInspectedSpans ||
 		usage.elapsedMs >= budgets.maxElapsedMs
@@ -495,6 +629,13 @@ function normalizeEvidenceAction(action: EvidenceAction): EvidenceAction {
 	if (action.type === "inspect") {
 		return {
 			type: "inspect",
+			spanIds: normalizeList(action.spanIds, 120),
+		};
+	}
+
+	if (action.type === "extract") {
+		return {
+			type: "extract",
 			spanIds: normalizeList(action.spanIds, 120),
 		};
 	}
@@ -555,6 +696,13 @@ function traceAction(
 		};
 	}
 
+	if (action.type === "extract") {
+		return {
+			type: "extract",
+			spanIds: action.spanIds,
+		};
+	}
+
 	return {
 		type: "search",
 		queries: action.queries,
@@ -581,8 +729,8 @@ function actionKey(
 		return `stop:${action.reason}`;
 	}
 
-	if (action.type === "inspect") {
-		return `inspect:${[...(action.spanIds ?? [])]
+	if (action.type === "inspect" || action.type === "extract") {
+		return `${action.type}:${[...(action.spanIds ?? [])]
 			.map((value) => value.toLowerCase())
 			.sort()
 			.join("\u0000")}`;
