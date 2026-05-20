@@ -8,11 +8,7 @@ import {
 import { findSource, findSpan, getCorpusStats } from "./corpus";
 import { tokenize } from "./embed";
 import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
-import {
-	type EvidenceLoopPlanner,
-	evidencePlannerOutputSchema,
-	runEvidenceLoop,
-} from "./evidence-loop";
+import { runAutonomousEvidenceLoop } from "./evidence-loop";
 import { tryRecordQueryRun } from "./history.server";
 import {
 	buildCitationCandidatesFromChunks,
@@ -199,9 +195,8 @@ async function runAgenticEvidenceLoop(
 	query: string,
 	traceSteps: AiTraceStep[],
 ): Promise<SearchResponse> {
-	const loop = await runEvidenceLoop({
+	const loop = await runAutonomousEvidenceLoop({
 		model: serverEnv.openAi.model,
-		planner: createModelEvidencePlanner(),
 		query,
 		tools: {
 			extract: async ({ search, spanIds }) => {
@@ -272,7 +267,7 @@ async function runAgenticEvidenceLoop(
 		},
 	});
 
-	traceSteps.push(loop.traceStep, ...loop.searchTraceSteps);
+	traceSteps.push(...loop.searchTraceSteps, loop.traceStep);
 
 	return loop.search ?? emptyAgenticSearchResponse(query);
 }
@@ -416,64 +411,6 @@ async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
 			traceStep,
 		};
 	}
-}
-
-function createModelEvidencePlanner(): EvidenceLoopPlanner {
-	const model = serverEnv.openAi.model;
-
-	return async ({
-		citations,
-		inspectedSpans,
-		iteration,
-		query,
-		retrievalChunks,
-	}) => {
-		const output = await chat({
-			adapter: openaiText(model),
-			outputSchema: evidencePlannerOutputSchema,
-			systemPrompts: [
-				[
-					"You drive a bounded source-evidence loop.",
-					"You may request one typed action: search, inspect, extract, or stop.",
-					"Do not answer the user question.",
-					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
-					"After a search, inspect only promising span IDs when seeing the full span text could help choose a narrower follow-up search.",
-					"Request extract only for retrieved or inspected span IDs where host-verified promotion could improve citation candidates.",
-					"Use exactPhrases for quoted terms, named objects, titles, unusual wording, and names.",
-					"If prior retrieved chunks and citations are enough to answer from source evidence, stop with reason enough-evidence.",
-					"If prior evidence is not enough and another search is unlikely to help, stop with reason insufficient-evidence.",
-				].join(" "),
-			],
-			messages: [
-				{
-					role: "user",
-					content: JSON.stringify({
-						query,
-						iteration,
-						citationHandles: citations.map(
-							(citation) => citation.citationHandle,
-						),
-						inspectedSpans: inspectedSpans.map((span) => ({
-							spanId: span.spanId,
-							sourceId: span.sourceId,
-							title: span.title,
-							location: `${span.section}, ${span.locator}`,
-							text: truncateForTrace(span.text),
-						})),
-						retrievedChunks: retrievalChunks.slice(0, 8).map((chunk) => ({
-							spanId: chunk.spanId,
-							sourceId: chunk.sourceId,
-							title: chunk.title,
-							location: `${chunk.section}, ${chunk.locator}`,
-							text: truncateForTrace(chunk.text),
-						})),
-					}),
-				},
-			],
-		});
-
-		return output.action;
-	};
 }
 
 function normalizePlanQueries(

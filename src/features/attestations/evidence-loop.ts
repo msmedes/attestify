@@ -1,3 +1,5 @@
+import { type ChatMiddleware, chat, toolDefinition } from "@tanstack/ai";
+import { openaiText } from "@tanstack/ai-openai";
 import { z } from "zod";
 import type {
 	AiTraceStep,
@@ -36,6 +38,14 @@ const inspectActionSchema = z.object({
 const extractActionSchema = z.object({
 	type: z.literal("extract"),
 	spanIds: z.array(z.string()).min(1).max(3),
+});
+const finishEvidenceActionSchema = z.object({
+	reason: z.enum(["enough-evidence", "insufficient-evidence"]),
+});
+
+const autonomousEvidenceResultSchema = z.object({
+	stopReason: z.enum(["enough-evidence", "insufficient-evidence"]),
+	rationale: z.string().optional(),
 });
 
 export const evidenceActionSchema = z.discriminatedUnion("type", [
@@ -114,6 +124,506 @@ export type EvidenceLoopResult = {
 	traceStep: EvidenceLoopTraceStep;
 	searchTraceSteps: AiTraceStep[];
 };
+
+export async function runAutonomousEvidenceLoop({
+	budgets = DEFAULT_BUDGETS,
+	model,
+	query,
+	tools,
+}: {
+	budgets?: EvidenceLoopBudgets;
+	model: string;
+	query: string;
+	tools: EvidenceLoopTools;
+}): Promise<EvidenceLoopResult> {
+	const startedAt = performance.now();
+	const iterations: EvidenceLoopTraceStep["output"]["iterations"] = [];
+	const searchTraceSteps: AiTraceStep[] = [];
+	let search: SearchResponse | null = null;
+	let stopReason: EvidenceLoopStopReason | null = null;
+	let extractionCalls = 0;
+	let modelCalls = 0;
+	let retrievedSpans = 0;
+	const inspectedSpans = new Map<string, InspectedEvidenceSpan>();
+	const hasCitations = () => (search?.citations.length ?? 0) > 0;
+	const canFinishWithEnoughEvidence = () => search !== null && hasCitations();
+
+	const budgetUsage = () =>
+		currentBudgetUsage({
+			startedAt,
+			extractionCalls,
+			inspectedSpans: inspectedSpans.size,
+			iterations: iterations.length,
+			modelCalls,
+			retrievedSpans,
+		});
+	const rejectAction = ({
+		action,
+		iteration,
+		reason,
+		reasonCode = "invalid-action",
+	}: {
+		action: EvidenceAction;
+		iteration: number;
+		reason: string;
+		reasonCode?: EvidenceLoopStopReason;
+	}) => {
+		stopReason = reasonCode;
+		iterations.push({
+			iteration,
+			requestedAction: action,
+			validatedAction: traceAction(action),
+			rejectedAction: { reason },
+		});
+
+		return { error: reason };
+	};
+	const nextIteration = () => iterations.length + 1;
+	const recordResult = ({
+		action,
+		iteration,
+		resultSummary,
+	}: {
+		action: EvidenceAction;
+		iteration: number;
+		resultSummary?: EvidenceLoopTraceStep["output"]["iterations"][number]["resultSummary"];
+	}) => {
+		iterations.push({
+			iteration,
+			requestedAction: action,
+			validatedAction: traceAction(action),
+			...(resultSummary ? { resultSummary } : {}),
+		});
+	};
+	const validateAction = (action: EvidenceAction, iteration: number) => {
+		const normalized = normalizeEvidenceAction(action);
+
+		if (iteration > budgets.maxIterations) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Evidence-loop action exceeded iteration budget.",
+				reasonCode: "budget-exhausted",
+			});
+		}
+		if (normalized.type === "search" && normalized.queries.length === 0) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Search action contained no non-empty queries.",
+			});
+		}
+		if (normalized.type === "inspect" && normalized.spanIds.length === 0) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Inspect action contained no non-empty span IDs.",
+			});
+		}
+		if (normalized.type === "extract" && normalized.spanIds.length === 0) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Extract action contained no non-empty span IDs.",
+			});
+		}
+		if (
+			(normalized.type === "inspect" || normalized.type === "extract") &&
+			!spanIdsAreAvailable({
+				action: normalized,
+				inspectedSpans,
+				search,
+			})
+		) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: `${normalized.type === "extract" ? "Extract" : "Inspect"} action referenced unavailable span IDs.`,
+			});
+		}
+		if (normalized.type === "extract" && !search) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Extract action requires retrieved evidence.",
+			});
+		}
+		if (normalized.type === "inspect") {
+			const repeatedSpanIds = normalized.spanIds.filter((spanId) =>
+				inspectedSpans.has(spanId),
+			);
+
+			if (repeatedSpanIds.length > 0) {
+				return rejectAction({
+					action: normalized,
+					iteration,
+					reason: `Inspect action repeated already inspected span IDs: ${repeatedSpanIds.join(", ")}.`,
+				});
+			}
+		}
+		if (isRepeatedAction(normalized, iterations)) {
+			return rejectAction({
+				action: normalized,
+				iteration,
+				reason: "Repeated evidence action.",
+			});
+		}
+
+		return normalized;
+	};
+
+	const searchEvidence = toolDefinition({
+		name: "searchEvidence",
+		description:
+			"Search the local source corpus for evidence. Use 3 to 5 literal retrieval queries and optional exact phrases for names, titles, quoted terms, and unusual wording. This is not web search; do not use URLs, site: operators, or search-engine syntax.",
+		inputSchema: searchActionSchema.omit({ type: true }),
+	}).server(async ({ queries, exactPhrases }) => {
+		const iteration = nextIteration();
+		const action = validateAction(
+			{ type: "search", queries, exactPhrases },
+			iteration,
+		);
+		if ("error" in action) {
+			return action;
+		}
+
+		try {
+			search = await tools.search({
+				query,
+				queries: action.queries,
+				exactPhrases: action.exactPhrases ?? [],
+			});
+		} catch (error) {
+			return rejectAction({
+				action,
+				iteration,
+				reason:
+					error instanceof Error
+						? `Search failed: ${error.message}`
+						: "Search failed.",
+				reasonCode: "tool-error",
+			});
+		}
+
+		if (search.aiTrace) {
+			searchTraceSteps.push(...search.aiTrace.steps);
+		}
+		retrievedSpans += search.retrievalChunks.length;
+		recordResult({
+			action,
+			iteration,
+			resultSummary: {
+				chunks: search.retrievalChunks.length,
+				citations: search.citations.length,
+				citationHandles: search.citations.map(
+					(citation) => citation.citationHandle,
+				),
+			},
+		});
+		if (isBudgetExhausted(budgetUsage(), budgets)) {
+			stopReason = "budget-exhausted";
+		}
+
+		return {
+			chunks: search.retrievalChunks.slice(0, 8).map((chunk) => ({
+				spanId: chunk.spanId,
+				sourceId: chunk.sourceId,
+				title: chunk.title,
+				location: `${chunk.section}, ${chunk.locator}`,
+				text: truncateForTrace(chunk.text),
+			})),
+			citationHandles: search.citations
+				.slice(0, 12)
+				.map((citation) => citation.citationHandle),
+			citationCount: search.citations.length,
+		};
+	});
+
+	const inspectSpans = toolDefinition({
+		name: "inspectSpans",
+		description:
+			"Read full source text for already retrieved span IDs when more context would help decide the next evidence step.",
+		inputSchema: inspectActionSchema.omit({ type: true }),
+	}).server(async ({ spanIds }) => {
+		const iteration = nextIteration();
+		const action = validateAction({ type: "inspect", spanIds }, iteration);
+		if ("error" in action) {
+			return action;
+		}
+		const inspectBudgetUsage = currentBudgetUsage({
+			startedAt,
+			extractionCalls,
+			inspectedSpans: inspectedSpans.size + action.spanIds.length,
+			iterations: iteration,
+			modelCalls,
+			retrievedSpans,
+		});
+		if (isBudgetExhausted(inspectBudgetUsage, budgets)) {
+			return rejectAction({
+				action,
+				iteration,
+				reason: "Inspect action exceeded evidence-loop budget.",
+				reasonCode: "budget-exhausted",
+			});
+		}
+
+		try {
+			const inspected = await tools.inspect({ spanIds: action.spanIds });
+			for (const span of inspected) {
+				inspectedSpans.set(span.spanId, span);
+			}
+			recordResult({
+				action,
+				iteration,
+				resultSummary: {
+					chunks: search?.retrievalChunks.length ?? 0,
+					citations: search?.citations.length ?? 0,
+					citationHandles:
+						search?.citations.map((citation) => citation.citationHandle) ?? [],
+					inspectedSpans: inspected.map((span) => ({
+						spanId: span.spanId,
+						sourceId: span.sourceId,
+						title: span.title,
+						section: span.section,
+						locator: span.locator,
+					})),
+				},
+			});
+
+			return {
+				spans: inspected.map((span) => ({
+					spanId: span.spanId,
+					sourceId: span.sourceId,
+					title: span.title,
+					location: `${span.section}, ${span.locator}`,
+					text: truncateForTrace(span.text),
+				})),
+			};
+		} catch (error) {
+			return rejectAction({
+				action,
+				iteration,
+				reason:
+					error instanceof Error
+						? `Inspection failed: ${error.message}`
+						: "Inspection failed.",
+				reasonCode: "tool-error",
+			});
+		}
+	});
+
+	const extractAttestations = toolDefinition({
+		name: "extractAttestations",
+		description:
+			"Run host-verified lazy extraction on retrieved or inspected span IDs when stronger citation candidates are needed.",
+		inputSchema: extractActionSchema.omit({ type: true }),
+	}).server(async ({ spanIds }) => {
+		const iteration = nextIteration();
+		const action = validateAction({ type: "extract", spanIds }, iteration);
+		if ("error" in action) {
+			return action;
+		}
+		const extractBudgetUsage = currentBudgetUsage({
+			startedAt,
+			extractionCalls: extractionCalls + action.spanIds.length,
+			inspectedSpans: inspectedSpans.size,
+			iterations: iteration,
+			modelCalls,
+			retrievedSpans,
+		});
+		if (isBudgetExhausted(extractBudgetUsage, budgets)) {
+			return rejectAction({
+				action,
+				iteration,
+				reason: "Extract action exceeded evidence-loop budget.",
+				reasonCode: "budget-exhausted",
+			});
+		}
+
+		try {
+			const extraction = await tools.extract({
+				search: search as SearchResponse,
+				spanIds: action.spanIds,
+			});
+			extractionCalls += action.spanIds.length;
+			search = {
+				...(search as SearchResponse),
+				citations: extraction.citations,
+			};
+			recordResult({
+				action,
+				iteration,
+				resultSummary: {
+					chunks: search.retrievalChunks.length,
+					citations: search.citations.length,
+					citationHandles: search.citations.map(
+						(citation) => citation.citationHandle,
+					),
+					extraction: {
+						attemptedSpanIds: action.spanIds,
+						promotedAttestationIds: extraction.promotedAttestationIds,
+						rejectedCandidateCount: extraction.rejectedCandidateCount,
+						verifiedCandidateCount: extraction.verifiedCandidateCount,
+					},
+				},
+			});
+
+			return {
+				citationHandles: search.citations
+					.slice(0, 12)
+					.map((citation) => citation.citationHandle),
+				promotedAttestationIds: extraction.promotedAttestationIds,
+				rejectedCandidateCount: extraction.rejectedCandidateCount,
+				verifiedCandidateCount: extraction.verifiedCandidateCount,
+			};
+		} catch (error) {
+			return rejectAction({
+				action,
+				iteration,
+				reason:
+					error instanceof Error
+						? `Extraction failed: ${error.message}`
+						: "Extraction failed.",
+				reasonCode: "tool-error",
+			});
+		}
+	});
+
+	const finishEvidence = toolDefinition({
+		name: "finishEvidence",
+		description:
+			"Finish evidence gathering once citations are enough to answer from source evidence, or when more searches are unlikely to help.",
+		inputSchema: finishEvidenceActionSchema,
+	}).server(({ reason }) => {
+		const iteration = nextIteration();
+		const action = { type: "stop" as const, reason };
+		if (reason === "enough-evidence" && !canFinishWithEnoughEvidence()) {
+			return rejectAction({
+				action,
+				iteration,
+				reason:
+					"Cannot finish with enough evidence before host-verified citations exist.",
+			});
+		}
+		stopReason = reason;
+		recordResult({ action, iteration });
+
+		return {
+			stopReason: reason,
+			citationCount: search?.citations.length ?? 0,
+		};
+	});
+
+	const middleware: ChatMiddleware = {
+		name: "attestify-evidence-loop",
+		onIteration(_ctx, info) {
+			modelCalls = Math.max(modelCalls, info.iteration + 1);
+		},
+	};
+	const agentLoopModelCallBudget = Math.max(0, budgets.maxModelCalls - 1);
+
+	try {
+		const result = await chat({
+			adapter: openaiText(model),
+			agentLoopStrategy: ({ iterationCount }) =>
+				!stopReason &&
+				iterations.length < budgets.maxIterations &&
+				iterationCount < agentLoopModelCallBudget &&
+				!isBudgetExhausted(budgetUsage(), budgets),
+			messages: [
+				{
+					role: "user",
+					content: JSON.stringify({
+						query,
+					}),
+				},
+			],
+			middleware: [middleware],
+			modelOptions: {
+				max_tool_calls: budgets.maxModelCalls,
+				parallel_tool_calls: false,
+				tool_choice: "auto",
+			},
+			outputSchema: autonomousEvidenceResultSchema,
+			systemPrompts: [
+				[
+					"You autonomously gather source evidence before answer synthesis.",
+					"Do not answer the user question.",
+					"Use searchEvidence first with 3 to 5 literal source-retrieval queries for the local corpus.",
+					"Do not use web-search syntax, URLs, or site: operators; searchEvidence is not connected to the web.",
+					"Use inspectSpans only for promising retrieved span IDs when full text would help.",
+					"Use extractAttestations only for retrieved or inspected span IDs where host-verified promotion could improve citations.",
+					"Use finishEvidence with enough-evidence once citations are enough to answer from source evidence.",
+					"Use finishEvidence with insufficient-evidence if further search is unlikely to help.",
+					"Never invent citation handles or span IDs.",
+				].join(" "),
+			],
+			tools: [
+				searchEvidence,
+				inspectSpans,
+				extractAttestations,
+				finishEvidence,
+			],
+		});
+		modelCalls += 1;
+		stopReason ??=
+			result.stopReason === "enough-evidence" && !canFinishWithEnoughEvidence()
+				? "insufficient-evidence"
+				: result.stopReason;
+	} catch (error) {
+		stopReason = "model-unavailable";
+		iterations.push({
+			iteration: nextIteration(),
+			requestedAction: null,
+			rejectedAction: {
+				reason:
+					error instanceof Error
+						? `Agent failed: ${error.message}`
+						: "Agent failed.",
+			},
+		});
+	}
+
+	const finalBudgetUsage = budgetUsage();
+	const exceededModelCallBudget =
+		finalBudgetUsage.modelCalls > budgets.maxModelCalls;
+	const finalStopReason = exceededModelCallBudget
+		? "budget-exhausted"
+		: (stopReason ??
+			(finalBudgetUsage.iterations >= budgets.maxIterations ||
+			finalBudgetUsage.modelCalls >= budgets.maxModelCalls ||
+			isBudgetExhausted(finalBudgetUsage, budgets)
+				? "budget-exhausted"
+				: "insufficient-evidence"));
+
+	return {
+		search,
+		searchTraceSteps,
+		traceStep: {
+			stage: "evidence-loop",
+			status: finalStopReason === "enough-evidence" ? "ready" : "stopped",
+			model,
+			durationMs: finalBudgetUsage.elapsedMs,
+			input: {
+				query,
+				budgets,
+			},
+			output: {
+				stopReason: finalStopReason,
+				budgetUsage: finalBudgetUsage,
+				iterations,
+				consideredEvidence: [...inspectedSpans.values()].map((span) => ({
+					spanId: span.spanId,
+					sourceId: span.sourceId,
+					title: span.title,
+					section: span.section,
+					locator: span.locator,
+					textPreview: truncateForTrace(span.text),
+				})),
+			},
+		},
+	};
+}
 
 export async function runEvidenceLoop({
 	budgets = DEFAULT_BUDGETS,
@@ -644,6 +1154,23 @@ function isBudgetExhausted(
 		usage.inspectedSpans > budgets.maxInspectedSpans ||
 		usage.elapsedMs >= budgets.maxElapsedMs
 	);
+}
+
+function spanIdsAreAvailable({
+	action,
+	inspectedSpans,
+	search,
+}: {
+	action: Extract<EvidenceAction, { type: "inspect" | "extract" }>;
+	inspectedSpans: Map<string, InspectedEvidenceSpan>;
+	search: SearchResponse | null;
+}) {
+	const availableSpanIds = new Set([
+		...(search?.retrievalChunks.map((chunk) => chunk.spanId) ?? []),
+		...inspectedSpans.keys(),
+	]);
+
+	return action.spanIds.every((spanId) => availableSpanIds.has(spanId));
 }
 
 function normalizeEvidenceAction(action: EvidenceAction): EvidenceAction {
