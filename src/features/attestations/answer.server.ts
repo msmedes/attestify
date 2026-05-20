@@ -5,6 +5,10 @@ import {
 	openaiText,
 } from "@tanstack/ai-openai";
 import { z } from "zod";
+import {
+	claimsSafeForAnswerSegments,
+	verifyAnswerClaims,
+} from "./claim-verification";
 import { tokenize } from "./embed";
 import { getOpenAiUnavailableReason } from "./env.server";
 import { tryRecordQueryRun } from "./history.server";
@@ -13,6 +17,8 @@ import type {
 	AiAnswer,
 	AiAnswerSegment,
 	AiTraceStep,
+	AiTraceTiming,
+	AiTraceTimingSpan,
 	CitationUnit,
 	SearchResponse,
 } from "./types";
@@ -36,7 +42,7 @@ type RetrievalPlan = {
 
 type GeneratedAnswer = {
 	answer: AiAnswer;
-	traceStep: AiTraceStep;
+	traceSteps: AiTraceStep[];
 };
 
 type RerankedCitations = {
@@ -75,6 +81,7 @@ const aiAnswerSchema = z.object({
 type ModelClaim = z.infer<typeof aiAnswerSchema>["claims"][number];
 
 export async function answerCorpus(query: string): Promise<SearchResponse> {
+	const startedAt = performance.now();
 	const traceSteps: AiTraceStep[] = [];
 	const openAiUnavailableReason = getOpenAiUnavailableReason();
 
@@ -83,6 +90,9 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 			query,
 			retrievalQueries: [query],
 		});
+		if (search.aiTrace) {
+			traceSteps.push(...search.aiTrace.steps);
+		}
 		traceSteps.push({
 			stage: "config",
 			status: "skipped",
@@ -91,7 +101,7 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 
 		const response = {
 			...search,
-			aiTrace: { steps: traceSteps },
+			aiTrace: buildAiTrace(traceSteps, startedAt),
 			aiAnswer: {
 				status: "unavailable",
 				message: openAiUnavailableReason,
@@ -114,30 +124,11 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 	if (search.aiTrace) {
 		traceSteps.push(...search.aiTrace.steps);
 	}
-	traceSteps.push({
-		stage: "retrieval",
-		status: "ready",
-		input: {
-			queries: search.retrievalQueries,
-		},
-		output: {
-			chunks: search.retrievalChunks.map((chunk) => ({
-				spanId: chunk.spanId,
-				sourceId: chunk.sourceId,
-				section: chunk.section,
-				locator: chunk.locator,
-				score: chunk.score,
-			})),
-			citationHandles: search.citations.map(
-				(citation) => citation.citationHandle,
-			),
-		},
-	});
 
 	if (retrievalPlan.error) {
 		const response = {
 			...search,
-			aiTrace: { steps: traceSteps },
+			aiTrace: buildAiTrace(traceSteps, startedAt),
 			aiAnswer: {
 				status: "unavailable",
 				message: retrievalPlan.error,
@@ -151,12 +142,12 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 	const reranked = await rerankCitations(query, search.citations);
 	traceSteps.push(reranked.traceStep);
 	const generatedAnswer = await generateAiAnswer(query, reranked.citations);
-	traceSteps.push(generatedAnswer.traceStep);
+	traceSteps.push(...generatedAnswer.traceSteps);
 
 	const response = {
 		...search,
 		citations: reranked.citations,
-		aiTrace: { steps: traceSteps },
+		aiTrace: buildAiTrace(traceSteps, startedAt),
 		aiAnswer: generatedAnswer.answer,
 	};
 	tryRecordQueryRun(response);
@@ -267,12 +258,14 @@ async function generateAiAnswer(
 					},
 				],
 			},
-			traceStep: {
-				stage: "answer-synthesis",
-				status: "skipped",
-				input: { query, citationCount: 0 },
-				output: { reason: "No citations available." },
-			},
+			traceSteps: [
+				{
+					stage: "answer-synthesis",
+					status: "skipped",
+					input: { query, citationCount: 0 },
+					output: { reason: "No citations available." },
+				},
+			],
 		};
 	}
 
@@ -335,11 +328,24 @@ async function generateAiAnswer(
 				status: "unavailable",
 				message,
 			},
-			traceStep,
+			traceSteps: [traceStep],
 		};
 	}
 
-	const modelSegments = selectModelSegments(modelAnswer.claims, citations);
+	const verifiedClaims = await verifyAnswerClaims({
+		claims: modelAnswer.claims,
+		citations,
+	});
+	const safeClaims = claimsSafeForAnswerSegments(verifiedClaims);
+	const modelSegments =
+		safeClaims.length > 0
+			? selectModelSegments(safeClaims, citations)
+			: [
+					{
+						type: "text" as const,
+						text: "I could not verify the generated claims against the cited source evidence.",
+					},
+				];
 	const evidencePreview = citations.map((citation, index) => ({
 		index: index + 1,
 		citationHandle: citation.citationHandle,
@@ -363,14 +369,27 @@ async function generateAiAnswer(
 			selectedSegments: modelSegments,
 		},
 	};
+	const claimVerificationTraceStep: AiTraceStep = {
+		stage: "claim-verification",
+		status: "ready",
+		input: {
+			claimCount: modelAnswer.claims.length,
+			citationHandles: citations.map((citation) => citation.citationHandle),
+		},
+		output: {
+			claims: verifiedClaims,
+		},
+	};
 	logTraceStep(traceStep);
+	logTraceStep(claimVerificationTraceStep);
 
 	return {
 		answer: {
 			status: "ready",
 			segments: hydrateQuoteSegments(modelSegments, citations),
+			claims: verifiedClaims,
 		},
-		traceStep,
+		traceSteps: [traceStep, claimVerificationTraceStep],
 	};
 }
 
@@ -615,6 +634,47 @@ function elapsedMs(startedAt: number): number {
 	return Math.round(performance.now() - startedAt);
 }
 
+function buildAiTrace(
+	steps: AiTraceStep[],
+	startedAt: number,
+): { steps: AiTraceStep[]; timing: AiTraceTiming } {
+	const totalMs = elapsedMs(startedAt);
+	const spans = steps.flatMap(traceStepTimingSpans);
+	const modelProviderMs = spans
+		.filter((span) => span.category === "model-provider")
+		.reduce((total, span) => total + span.durationMs, 0);
+
+	return {
+		steps,
+		timing: {
+			totalMs,
+			modelProviderMs,
+			applicationMs: Math.max(0, totalMs - modelProviderMs),
+			spans,
+		},
+	};
+}
+
+function traceStepTimingSpans(step: AiTraceStep): AiTraceTimingSpan[] {
+	if (step.stage === "retrieval") {
+		return step.output.timing;
+	}
+
+	if ("durationMs" in step && "model" in step) {
+		return [
+			{
+				stage: step.stage,
+				label: step.stage,
+				category: "model-provider",
+				durationMs: step.durationMs,
+				model: step.model,
+			},
+		];
+	}
+
+	return [];
+}
+
 function getOpenAIModel(): OpenAIChatModel {
 	const configuredModel = process.env.OPENAI_MODEL ?? "gpt-5.4-nano";
 
@@ -663,13 +723,9 @@ function selectModelSegments(
 	);
 	const segments = modelClaims.flatMap((claim): ModelSegment[] => {
 		const text = claim.text.trim();
-		const citationHandles = selectClaimCitationHandles({
-			claimText: text,
-			modelCitationHandles: claim.citationHandles.filter((citationHandle) =>
-				validHandles.has(citationHandle),
-			),
-			citations,
-		});
+		const citationHandles = claim.citationHandles.filter((citationHandle) =>
+			validHandles.has(citationHandle),
+		);
 
 		if (!text || citationHandles.length === 0) {
 			return [];
@@ -686,49 +742,6 @@ function selectModelSegments(
 	});
 
 	return segments.length > 0 ? segments : fallback;
-}
-
-function selectClaimCitationHandles({
-	citations,
-	claimText,
-	modelCitationHandles,
-}: {
-	citations: CitationUnit[];
-	claimText: string;
-	modelCitationHandles: string[];
-}): string[] {
-	const ranked = citations
-		.map((citation) => ({
-			citationHandle: citation.citationHandle,
-			modelSelected: modelCitationHandles.includes(citation.citationHandle),
-			score: claimCitationScore(claimText, citation),
-		}))
-		.sort((left, right) => {
-			if (right.score !== left.score) {
-				return right.score - left.score;
-			}
-
-			return Number(right.modelSelected) - Number(left.modelSelected);
-		});
-	const top = ranked.at(0);
-
-	if (!top || top.score === 0) {
-		return modelCitationHandles.slice(0, 2);
-	}
-
-	const selected = [top.citationHandle];
-
-	for (const handle of modelCitationHandles) {
-		if (selected.length >= 2) {
-			break;
-		}
-
-		if (!selected.includes(handle)) {
-			selected.push(handle);
-		}
-	}
-
-	return selected;
 }
 
 function claimCitationScore(claimText: string, citation: CitationUnit): number {

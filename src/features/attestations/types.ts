@@ -207,7 +207,8 @@ export type AiTraceStep =
 	| RetrievalTraceStep
 	| LazyExpansionTraceStep
 	| RerankTraceStep
-	| AnswerSynthesisTraceStep;
+	| AnswerSynthesisTraceStep
+	| ClaimVerificationTraceStep;
 
 export type ConfigTraceStep = {
 	stage: "config";
@@ -398,6 +399,18 @@ export type AnswerSynthesisTraceStep =
 			error: string;
 	  };
 
+export type ClaimVerificationTraceStep = {
+	stage: "claim-verification";
+	status: "ready";
+	input: {
+		claimCount: number;
+		citationHandles: string[];
+	};
+	output: {
+		claims: AnswerClaim[];
+	};
+};
+
 export type SearchRequest = {
 	query: string;
 };
@@ -420,11 +433,32 @@ export type AiAnswer =
 	| {
 			status: "ready";
 			segments: AiAnswerSegment[];
+			claims?: AnswerClaim[];
 	  }
 	| {
 			status: "unavailable";
 			message: string;
 	  };
+
+export type AnswerClaim = {
+	text: string;
+	citationHandles: string[];
+	verification: {
+		status: "supported" | "contradicted" | "weak" | "missing";
+		method: string;
+		rationale: string;
+		evidence: Array<{
+			citationHandle: string;
+			attestationText: string;
+			anchorQuote: string;
+			sourceSpanText: string;
+			sourceTitle: string;
+			locator: string;
+			sourceSnapshotId?: string;
+			citationIdentityStatus: "resolvable" | "legacy";
+		}>;
+	};
+};
 
 export type AiAnswerSegment =
 	| {
