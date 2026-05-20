@@ -182,12 +182,30 @@ export type SearchResponse = {
 
 export type AiTrace = {
 	steps: AiTraceStep[];
+	timing?: AiTraceTiming;
+};
+
+export type AiTraceTiming = {
+	totalMs: number;
+	modelProviderMs: number;
+	applicationMs: number;
+	spans: AiTraceTimingSpan[];
+};
+
+export type AiTraceTimingSpan = {
+	stage: string;
+	label: string;
+	category: "application" | "model-provider";
+	durationMs: number;
+	model?: string;
+	count?: number;
 };
 
 export type AiTraceStep =
 	| ConfigTraceStep
 	| RetrievalPlanTraceStep
 	| RetrievalTraceStep
+	| LazyExpansionTraceStep
 	| RerankTraceStep
 	| AnswerSynthesisTraceStep;
 
@@ -224,10 +242,12 @@ export type RetrievalPlanTraceStep =
 export type RetrievalTraceStep = {
 	stage: "retrieval";
 	status: "ready";
+	durationMs: number;
 	input: {
 		queries: string[];
 	};
 	output: {
+		timing: AiTraceTimingSpan[];
 		chunks: Array<{
 			spanId: string;
 			sourceId: string;
@@ -236,6 +256,35 @@ export type RetrievalTraceStep = {
 			score: number;
 		}>;
 		citationHandles: string[];
+	};
+};
+
+export type LazyExpansionTraceStep = {
+	stage: "lazy-expansion";
+	status: "ready" | "skipped";
+	input: {
+		maxSpans: number;
+		retrievedSpanIds: string[];
+	};
+	output: {
+		attempts: Array<{
+			spanId: string;
+			cacheHit: boolean;
+			rawCandidates: number;
+			verifiedCandidates: number;
+			promotions: number;
+			rejections: number;
+			verificationResults: Array<{
+				candidateId: string;
+				status: "verified" | "rejected";
+				reason?: string;
+			}>;
+		}>;
+		promotedAttestationIds: string[];
+		skipped: Array<{
+			spanId: string;
+			reason: string;
+		}>;
 	};
 };
 

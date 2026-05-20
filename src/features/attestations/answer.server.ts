@@ -111,6 +111,9 @@ export async function answerCorpus(query: string): Promise<SearchResponse> {
 		citationLimit: 30,
 		citationScoreFloor: 0,
 	});
+	if (search.aiTrace) {
+		traceSteps.push(...search.aiTrace.steps);
+	}
 	traceSteps.push({
 		stage: "retrieval",
 		status: "ready",
