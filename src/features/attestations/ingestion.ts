@@ -151,34 +151,44 @@ export type ExtractionCache = {
 	set(result: CachedExtractionResult): void;
 };
 
+export type CacheHitAttestationRecord = {
+	state: "cache-hit";
+	cacheKey: ExtractionCacheKey;
+	candidateCount: number;
+};
+
+export type RawAttestationCandidateRecord = {
+	state: "raw-candidate";
+	cacheKey: ExtractionCacheKey;
+	candidate: AttestationCandidate;
+};
+
+export type VerifiedAttestationCandidateRecord = {
+	state: "verified-candidate";
+	cacheKey: ExtractionCacheKey;
+	candidate: AttestationCandidate;
+	method: VerifiedAttestation["support"]["method"];
+};
+
+export type PromotedAttestationRecord = {
+	state: "promoted";
+	cacheKey: ExtractionCacheKey;
+	attestation: VerifiedAttestation;
+};
+
+export type RejectedAttestationCandidateRecord = {
+	state: "rejected";
+	cacheKey: ExtractionCacheKey;
+	candidate: AttestationCandidate;
+	reason: string;
+};
+
 export type AttestationLifecycleRecord =
-	| {
-			state: "cache-hit";
-			cacheKey: ExtractionCacheKey;
-			candidateCount: number;
-	  }
-	| {
-			state: "raw-candidate";
-			cacheKey: ExtractionCacheKey;
-			candidate: AttestationCandidate;
-	  }
-	| {
-			state: "verified-candidate";
-			cacheKey: ExtractionCacheKey;
-			candidate: AttestationCandidate;
-			method: VerifiedAttestation["support"]["method"];
-	  }
-	| {
-			state: "promoted";
-			cacheKey: ExtractionCacheKey;
-			attestation: VerifiedAttestation;
-	  }
-	| {
-			state: "rejected";
-			cacheKey: ExtractionCacheKey;
-			candidate: AttestationCandidate;
-			reason: string;
-	  };
+	| CacheHitAttestationRecord
+	| RawAttestationCandidateRecord
+	| VerifiedAttestationCandidateRecord
+	| PromotedAttestationRecord
+	| RejectedAttestationCandidateRecord;
 
 export type LazyExtractionLifecycleResult = {
 	records: AttestationLifecycleRecord[];
@@ -446,15 +456,16 @@ export async function runLazyExtractionLifecycle({
 			continue;
 		}
 
-		records.push({
+		const verifiedCandidate: VerifiedAttestationCandidateRecord = {
 			state: "verified-candidate",
 			cacheKey,
 			candidate,
 			method: verification.method,
-		});
+		};
+		records.push(verifiedCandidate);
 
-		const promoted = verifyAttestationCandidate({
-			candidate,
+		const promoted = promoteVerifiedAttestation({
+			verifiedCandidate,
 			span,
 			verifiedAt,
 		});
@@ -473,16 +484,16 @@ export async function runLazyExtractionLifecycle({
 }
 
 export function promoteVerifiedAttestation({
-	candidate,
 	span,
+	verifiedCandidate,
 	verifiedAt,
 }: {
-	candidate: AttestationCandidate;
 	span: SourceSpanCandidate;
+	verifiedCandidate: VerifiedAttestationCandidateRecord;
 	verifiedAt: string;
 }): VerifiedAttestation {
 	return verifyAttestationCandidate({
-		candidate,
+		candidate: verifiedCandidate.candidate,
 		span,
 		verifiedAt,
 	});
@@ -494,11 +505,7 @@ export function rejectAttestationCandidate({
 }: {
 	candidate: AttestationCandidate;
 	reason: string;
-}): {
-	state: "rejected";
-	candidate: AttestationCandidate;
-	reason: string;
-} {
+}): Pick<RejectedAttestationCandidateRecord, "candidate" | "reason" | "state"> {
 	return {
 		state: "rejected",
 		candidate,
@@ -647,10 +654,7 @@ function stableSettingsJson(settings: ExtractionSettings): string {
 				entry[1] !== undefined,
 		)
 		.sort(([left], [right]) => left.localeCompare(right))
-		.map(([key, value]) => [
-			key,
-			Array.isArray(value) ? [...value].sort() : value,
-		]);
+		.map(([key, value]) => [key, value]);
 
 	return JSON.stringify(Object.fromEntries(entries));
 }

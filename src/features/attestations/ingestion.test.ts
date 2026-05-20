@@ -506,7 +506,7 @@ describe("ingestion contract", () => {
 		const first = await runLazyExtractionLifecycle({
 			cache,
 			extractor: countedExtractor,
-			settings: { maxClaims: 2, mode: "focused", labels: ["b", "a"] },
+			settings: { maxClaims: 2, mode: "focused", labels: ["a", "b"] },
 			snapshot,
 			span,
 			startedAt: "2026-05-19T00:00:00.000Z",
@@ -552,19 +552,35 @@ describe("ingestion contract", () => {
 			locator: "Act 1, Scene 1, lines 1-2",
 			text: "Barnardo asks who is there.",
 		});
+		const alternateSpan = createSourceSpanCandidate({
+			snapshot,
+			spanKey: "act-1-scene-1-lines-3-4",
+			section: "Act 1 Scene 1",
+			locator: "Act 1, Scene 1, lines 3-4",
+			text: "Barnardo asks who is there.",
+		});
 		const baseKey = createExtractionCacheKey({
 			extractorId: "fake",
 			extractorVersion: "1.0.0",
-			settings: { maxClaims: 2 },
+			settings: { maxClaims: 2, modes: ["strict", "broad"] },
 			snapshot,
 			span,
 		});
 
 		expect(
 			createExtractionCacheKey({
+				extractorId: "other-fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
 				extractorId: "fake",
 				extractorVersion: "1.0.1",
-				settings: { maxClaims: 2 },
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
 				snapshot,
 				span,
 			}).key,
@@ -573,7 +589,7 @@ describe("ingestion contract", () => {
 			createExtractionCacheKey({
 				extractorId: "fake",
 				extractorVersion: "1.0.0",
-				settings: { maxClaims: 3 },
+				settings: { maxClaims: 3, modes: ["strict", "broad"] },
 				snapshot,
 				span,
 			}).key,
@@ -582,7 +598,25 @@ describe("ingestion contract", () => {
 			createExtractionCacheKey({
 				extractorId: "fake",
 				extractorVersion: "1.0.0",
-				settings: { maxClaims: 2 },
+				settings: { maxClaims: 2, modes: ["broad", "strict"] },
+				snapshot,
+				span,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
+				snapshot,
+				span: alternateSpan,
+			}).key,
+		).not.toBe(baseKey.key);
+		expect(
+			createExtractionCacheKey({
+				extractorId: "fake",
+				extractorVersion: "1.0.0",
+				settings: { maxClaims: 2, modes: ["strict", "broad"] },
 				snapshot: changedSnapshot,
 				span: changedSpan,
 			}).key,
@@ -617,26 +651,15 @@ describe("ingestion contract", () => {
 			"raw-candidate",
 			"rejected",
 		]);
+		const rawRecord = result.records[0];
+
+		expect(rawRecord?.state).toBe("raw-candidate");
+		if (rawRecord?.state !== "raw-candidate") {
+			throw new Error("Expected raw candidate lifecycle record.");
+		}
 		expect(
 			rejectAttestationCandidate({
-				candidate:
-					result.records[0]?.state === "raw-candidate"
-						? result.records[0].candidate
-						: createAttestationCandidate({
-								extractionRun: createExtractionRun({
-									snapshot,
-									extractorId: "fallback",
-									extractorVersion: "1",
-									startedAt: "2026-05-19T00:00:00.000Z",
-								}),
-								span,
-								type: "utterance",
-								subject: "Hamlet",
-								predicate: "mentions",
-								value: "the mousetrap",
-								context: "",
-								anchorText: "the mousetrap",
-							}),
+				candidate: rawRecord.candidate,
 				reason: "not source-supported",
 			}).state,
 		).toBe("rejected");
