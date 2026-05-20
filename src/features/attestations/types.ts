@@ -329,6 +329,7 @@ export type EvidenceLoopTraceStep = {
 			maxIterations: number;
 			maxModelCalls: number;
 			maxRetrievedSpans: number;
+			maxInspectedSpans: number;
 			maxElapsedMs: number;
 		};
 	};
@@ -338,15 +339,17 @@ export type EvidenceLoopTraceStep = {
 			iterations: number;
 			modelCalls: number;
 			retrievedSpans: number;
+			inspectedSpans: number;
 			elapsedMs: number;
 		};
 		iterations: Array<{
 			iteration: number;
 			requestedAction: unknown;
 			validatedAction?: {
-				type: "search" | "stop";
+				type: "search" | "inspect" | "stop";
 				queries?: string[];
 				exactPhrases?: string[];
+				spanIds?: string[];
 				reason?: EvidenceLoopStopReason;
 			};
 			rejectedAction?: {
@@ -356,7 +359,22 @@ export type EvidenceLoopTraceStep = {
 				chunks: number;
 				citations: number;
 				citationHandles: string[];
+				inspectedSpans?: Array<{
+					spanId: string;
+					sourceId: string;
+					title: string;
+					section: string;
+					locator: string;
+				}>;
 			};
+		}>;
+		consideredEvidence: Array<{
+			spanId: string;
+			sourceId: string;
+			title: string;
+			section: string;
+			locator: string;
+			textPreview: string;
 		}>;
 	};
 };
