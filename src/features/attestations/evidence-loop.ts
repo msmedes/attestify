@@ -293,7 +293,7 @@ export async function runEvidenceLoop({
 					requestedAction,
 					validatedAction: traceAction(action),
 					rejectedAction: {
-						reason: `Inspect action referenced unavailable span IDs: ${unknownSpanIds.join(", ")}.`,
+						reason: `${action.type === "extract" ? "Extract" : "Inspect"} action referenced unavailable span IDs: ${unknownSpanIds.join(", ")}.`,
 					},
 				});
 				break;
