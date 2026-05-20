@@ -89,6 +89,114 @@ export type VerifiedAttestation = AttestationCandidate & {
 	};
 };
 
+export type ExtractionSettings = Record<
+	string,
+	boolean | number | string | null | string[]
+>;
+
+export type AttestationCandidateDraft = {
+	type: IngestionAttestationType;
+	subject: string;
+	predicate: string;
+	value: string;
+	context: string;
+	anchorText: string;
+};
+
+export type ExtractionCacheKey = {
+	key: string;
+	snapshotId: string;
+	spanId: string;
+	extractorId: string;
+	extractorVersion: string;
+	settingsHash: string;
+};
+
+export type CachedExtractionResult = {
+	cacheKey: ExtractionCacheKey;
+	candidates: AttestationCandidate[];
+	cachedAt: string;
+};
+
+export type AttestationExtractor = {
+	extractorId: string;
+	extractorVersion: string;
+	extract(input: {
+		snapshot: SourceSnapshot;
+		span: SourceSpanCandidate;
+		settings: ExtractionSettings;
+	}): Promise<AttestationCandidateDraft[]> | AttestationCandidateDraft[];
+};
+
+export type AttestationVerifier = {
+	verify(input: { candidate: AttestationCandidate; span: SourceSpanCandidate }):
+		| Promise<
+				| {
+						status: "verified";
+						method: VerifiedAttestation["support"]["method"];
+				  }
+				| { status: "rejected"; reason: string }
+		  >
+		| (
+				| {
+						status: "verified";
+						method: VerifiedAttestation["support"]["method"];
+				  }
+				| { status: "rejected"; reason: string }
+		  );
+};
+
+export type ExtractionCache = {
+	get(cacheKey: ExtractionCacheKey): CachedExtractionResult | undefined;
+	set(result: CachedExtractionResult): void;
+};
+
+export type AttestationLifecycleRecord =
+	| {
+			state: "cache-hit";
+			cacheKey: ExtractionCacheKey;
+			candidateCount: number;
+	  }
+	| {
+			state: "raw-candidate";
+			cacheKey: ExtractionCacheKey;
+			candidate: AttestationCandidate;
+	  }
+	| {
+			state: "verified-candidate";
+			cacheKey: ExtractionCacheKey;
+			candidate: AttestationCandidate;
+			method: VerifiedAttestation["support"]["method"];
+	  }
+	| {
+			state: "promoted";
+			cacheKey: ExtractionCacheKey;
+			attestation: VerifiedAttestation;
+	  }
+	| {
+			state: "rejected";
+			cacheKey: ExtractionCacheKey;
+			candidate: AttestationCandidate;
+			reason: string;
+	  };
+
+export type LazyExtractionLifecycleResult = {
+	records: AttestationLifecycleRecord[];
+	promotedAttestations: VerifiedAttestation[];
+};
+
+export class InMemoryExtractionCache implements ExtractionCache {
+	readonly results = new Map<string, CachedExtractionResult>();
+
+	get(cacheKey: ExtractionCacheKey): CachedExtractionResult | undefined {
+		return this.results.get(cacheKey.key);
+	}
+
+	set(result: CachedExtractionResult): void {
+		this.results.set(result.cacheKey.key, result);
+	}
+}
+
 export class IngestionContractError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -205,6 +313,199 @@ export function createExtractionRun({
 	};
 }
 
+export function createExtractionCacheKey({
+	extractorId,
+	extractorVersion,
+	settings,
+	snapshot,
+	span,
+}: {
+	extractorId: string;
+	extractorVersion: string;
+	settings?: ExtractionSettings;
+	snapshot: SourceSnapshot;
+	span: SourceSpanCandidate;
+}): ExtractionCacheKey {
+	const normalizedExtractorId = requireNonEmpty(extractorId, "extractorId");
+	const normalizedExtractorVersion = requireNonEmpty(
+		extractorVersion,
+		"extractorVersion",
+	);
+
+	if (snapshot.snapshotId !== span.snapshotId) {
+		throw new IngestionContractError(
+			"Extraction cache key snapshotId does not match source span candidate.",
+		);
+	}
+
+	const settingsJson = stableSettingsJson(settings ?? {});
+	const settingsHash = sha256(settingsJson);
+	const key = stableId("extract-cache", [
+		snapshot.snapshotId,
+		span.spanId,
+		normalizedExtractorId,
+		normalizedExtractorVersion,
+		settingsHash,
+	]);
+
+	return {
+		key,
+		snapshotId: snapshot.snapshotId,
+		spanId: span.spanId,
+		extractorId: normalizedExtractorId,
+		extractorVersion: normalizedExtractorVersion,
+		settingsHash,
+	};
+}
+
+export async function runLazyExtractionLifecycle({
+	cache,
+	extractor,
+	settings = {},
+	snapshot,
+	span,
+	startedAt,
+	verifiedAt,
+	verifier,
+}: {
+	cache: ExtractionCache;
+	extractor: AttestationExtractor;
+	settings?: ExtractionSettings;
+	snapshot: SourceSnapshot;
+	span: SourceSpanCandidate;
+	startedAt: string;
+	verifiedAt: string;
+	verifier: AttestationVerifier;
+}): Promise<LazyExtractionLifecycleResult> {
+	const cacheKey = createExtractionCacheKey({
+		extractorId: extractor.extractorId,
+		extractorVersion: extractor.extractorVersion,
+		settings,
+		snapshot,
+		span,
+	});
+	const extractionRun = createExtractionRun({
+		snapshot,
+		extractorId: extractor.extractorId,
+		extractorVersion: extractor.extractorVersion,
+		startedAt,
+	});
+	const records: AttestationLifecycleRecord[] = [];
+	const cached = cache.get(cacheKey);
+	const candidates =
+		cached?.candidates ??
+		(
+			await extractor.extract({
+				snapshot,
+				span,
+				settings,
+			})
+		).map((draft) =>
+			createAttestationCandidate({
+				extractionRun,
+				span,
+				...draft,
+			}),
+		);
+
+	if (!cached) {
+		cache.set({
+			cacheKey,
+			candidates,
+			cachedAt: startedAt,
+		});
+	}
+
+	if (cached) {
+		records.push({
+			state: "cache-hit",
+			cacheKey,
+			candidateCount: candidates.length,
+		});
+	}
+
+	const promotedAttestations: VerifiedAttestation[] = [];
+
+	for (const candidate of candidates) {
+		ensureCandidateBelongsToSpan(candidate, span);
+		records.push({
+			state: "raw-candidate",
+			cacheKey,
+			candidate,
+		});
+
+		const verification = await verifier.verify({ candidate, span });
+
+		if (verification.status === "rejected") {
+			records.push({
+				state: "rejected",
+				cacheKey,
+				candidate,
+				reason: verification.reason,
+			});
+			continue;
+		}
+
+		records.push({
+			state: "verified-candidate",
+			cacheKey,
+			candidate,
+			method: verification.method,
+		});
+
+		const promoted = verifyAttestationCandidate({
+			candidate,
+			span,
+			verifiedAt,
+		});
+		records.push({
+			state: "promoted",
+			cacheKey,
+			attestation: promoted,
+		});
+		promotedAttestations.push(promoted);
+	}
+
+	return {
+		records,
+		promotedAttestations,
+	};
+}
+
+export function promoteVerifiedAttestation({
+	candidate,
+	span,
+	verifiedAt,
+}: {
+	candidate: AttestationCandidate;
+	span: SourceSpanCandidate;
+	verifiedAt: string;
+}): VerifiedAttestation {
+	return verifyAttestationCandidate({
+		candidate,
+		span,
+		verifiedAt,
+	});
+}
+
+export function rejectAttestationCandidate({
+	candidate,
+	reason,
+}: {
+	candidate: AttestationCandidate;
+	reason: string;
+}): {
+	state: "rejected";
+	candidate: AttestationCandidate;
+	reason: string;
+} {
+	return {
+		state: "rejected",
+		candidate,
+		reason: requireNonEmpty(reason, "reason"),
+	};
+}
+
 export function createAttestationCandidate({
 	anchorText,
 	context,
@@ -316,10 +617,42 @@ function requireSourceText(value: string, fieldName: string): string {
 	return value;
 }
 
+function ensureCandidateBelongsToSpan(
+	candidate: AttestationCandidate,
+	span: SourceSpanCandidate,
+): void {
+	if (candidate.spanId !== span.spanId) {
+		throw new IngestionContractError(
+			"Cached attestation candidate spanId does not match source span candidate.",
+		);
+	}
+
+	if (candidate.snapshotId !== span.snapshotId) {
+		throw new IngestionContractError(
+			"Cached attestation candidate snapshotId does not match source span candidate.",
+		);
+	}
+}
+
 function normalizeOptional(value: string | undefined): string | undefined {
 	const normalized = value?.replace(/\s+/g, " ").trim();
 
 	return normalized || undefined;
+}
+
+function stableSettingsJson(settings: ExtractionSettings): string {
+	const entries = Object.entries(settings)
+		.filter(
+			(entry): entry is [string, NonNullable<ExtractionSettings[string]>] =>
+				entry[1] !== undefined,
+		)
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([key, value]) => [
+			key,
+			Array.isArray(value) ? [...value].sort() : value,
+		]);
+
+	return JSON.stringify(Object.fromEntries(entries));
 }
 
 function optionalField<Key extends string>(
