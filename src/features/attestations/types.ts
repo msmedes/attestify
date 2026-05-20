@@ -245,6 +245,7 @@ export type AiTraceStep =
 	| LazyExpansionTraceStep
 	| RerankTraceStep
 	| AgenticRetrievalTraceStep
+	| EvidenceLoopTraceStep
 	| AnswerSynthesisTraceStep
 	| ClaimVerificationTraceStep;
 
@@ -308,6 +309,57 @@ export type AgenticRetrievalTraceStep =
 				rationale: string;
 			};
 	  };
+
+export type EvidenceLoopStopReason =
+	| "enough-evidence"
+	| "insufficient-evidence"
+	| "budget-exhausted"
+	| "invalid-action"
+	| "tool-error"
+	| "model-unavailable";
+
+export type EvidenceLoopTraceStep = {
+	stage: "evidence-loop";
+	status: "ready" | "stopped";
+	model?: string;
+	durationMs: number;
+	input: {
+		query: string;
+		budgets: {
+			maxIterations: number;
+			maxModelCalls: number;
+			maxRetrievedSpans: number;
+			maxElapsedMs: number;
+		};
+	};
+	output: {
+		stopReason: EvidenceLoopStopReason;
+		budgetUsage: {
+			iterations: number;
+			modelCalls: number;
+			retrievedSpans: number;
+			elapsedMs: number;
+		};
+		iterations: Array<{
+			iteration: number;
+			requestedAction: unknown;
+			validatedAction?: {
+				type: "search" | "stop";
+				queries?: string[];
+				exactPhrases?: string[];
+				reason?: EvidenceLoopStopReason;
+			};
+			rejectedAction?: {
+				reason: string;
+			};
+			resultSummary?: {
+				chunks: number;
+				citations: number;
+				citationHandles: string[];
+			};
+		}>;
+	};
+};
 
 export type RetrievalTraceStep = {
 	stage: "retrieval";
