@@ -1,4 +1,5 @@
 import { Link2 } from "lucide-react";
+import { citationDiagnosticState } from "../../citation-state";
 import type { CitationUnit } from "../../types";
 import { CitationCard } from "./CitationCard";
 
@@ -7,6 +8,14 @@ type EvidenceColumnProps = {
 };
 
 export function EvidenceColumn({ citations }: EvidenceColumnProps) {
+	const stateCounts = citations.reduce(
+		(counts, citation) => {
+			counts[citationDiagnosticState(citation).status] += 1;
+			return counts;
+		},
+		{ resolved: 0, stale: 0, unresolved: 0 },
+	);
+
 	return (
 		<aside className="border-[#20211f] border-t bg-[#eeeeea] xl:border-t-0 xl:border-l">
 			<div className="sticky top-0 max-h-screen overflow-y-auto">
@@ -17,6 +26,13 @@ export function EvidenceColumn({ citations }: EvidenceColumnProps) {
 					</div>
 					<Link2 aria-hidden="true" className="text-[#3b6d65]" size={22} />
 				</div>
+				{citations.length > 0 ? (
+					<div className="flex flex-wrap gap-2 border-[#20211f] border-b bg-[#f7f7f2] px-4 py-3 text-xs">
+						<StateCount label="Resolved" value={stateCounts.resolved} />
+						<StateCount label="Older snapshot" value={stateCounts.stale} />
+						<StateCount label="Unresolved" value={stateCounts.unresolved} />
+					</div>
+				) : null}
 
 				{citations.length > 0 ? (
 					<div className="grid gap-3 p-4">
@@ -29,5 +45,13 @@ export function EvidenceColumn({ citations }: EvidenceColumnProps) {
 				)}
 			</div>
 		</aside>
+	);
+}
+
+function StateCount({ label, value }: { label: string; value: number }) {
+	return (
+		<span className="border border-[#c9cac3] bg-[#ffffff] px-2 py-1 text-[#4a4c48]">
+			{label}: <span className="font-semibold tabular-nums">{value}</span>
+		</span>
 	);
 }
