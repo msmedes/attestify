@@ -10,6 +10,7 @@ import { queryRuns } from "./history.schema";
 import type {
 	AiAnswerSegment,
 	CitationUnit,
+	ClaimVerificationSummary,
 	QueryRunDetail,
 	QueryRunSummary,
 	SearchResponse,
@@ -222,6 +223,7 @@ type QueryRunRow = typeof queryRuns.$inferSelect;
 function summarizeRun(run: QueryRunRow): QueryRunSummary {
 	const citations = parseHistoryArray(run.citationsJson);
 	const retrievalQueries = parseHistoryArray(run.retrievalQueriesJson);
+	const response = parseHistoryJson(run.responseJson) as SearchResponse;
 
 	return {
 		id: run.id,
@@ -231,6 +233,38 @@ function summarizeRun(run: QueryRunRow): QueryRunSummary {
 		answerText: run.answerText,
 		citationCount: citations.length,
 		retrievalQueryCount: retrievalQueries.length,
+		...optionalClaimVerificationSummary(response),
+	};
+}
+
+function optionalClaimVerificationSummary(response: SearchResponse): {
+	claimVerification?: ClaimVerificationSummary;
+} {
+	const claims =
+		response.aiAnswer?.status === "ready"
+			? (response.aiAnswer.claims ?? [])
+			: [];
+
+	if (claims.length === 0) {
+		return {};
+	}
+
+	return {
+		claimVerification: claims.reduce(
+			(summary, claim) => {
+				summary.total += 1;
+				summary[claim.verification.status] += 1;
+
+				return summary;
+			},
+			{
+				total: 0,
+				supported: 0,
+				weak: 0,
+				contradicted: 0,
+				missing: 0,
+			} satisfies ClaimVerificationSummary,
+		),
 	};
 }
 

@@ -423,10 +423,19 @@ export type QueryRunSummary = {
 	answerText: string;
 	citationCount: number;
 	retrievalQueryCount: number;
+	claimVerification?: ClaimVerificationSummary;
 };
 
 export type QueryRunDetail = QueryRunSummary & {
 	response: SearchResponse;
+};
+
+export type ClaimVerificationSummary = {
+	total: number;
+	supported: number;
+	weak: number;
+	contradicted: number;
+	missing: number;
 };
 
 export type AiAnswer =

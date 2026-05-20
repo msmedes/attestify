@@ -63,23 +63,28 @@ export function AnswerPanel({
 				) : null}
 
 				{aiAnswer?.status === "ready" ? (
-					<p className="max-w-[72ch]">
-						{answerSegmentItems.map(({ item: segment, key }) =>
-							segment.type === "text" ? (
-								<span key={key}>{segment.text}</span>
-							) : (
-								<CitationMarker
-									citedText={segment.text}
-									citationNumber={segment.citationNumber}
-									key={key}
-									quote={segment.quote}
-									sourceText={segment.sourceText}
-									title={`${segment.sourceTitle}, ${segment.section}, ${segment.locator}`}
-									to={`#${citationElementId(segment.citationHandle)}`}
-								/>
-							),
-						)}
-					</p>
+					<>
+						<p className="max-w-[72ch]">
+							{answerSegmentItems.map(({ item: segment, key }) =>
+								segment.type === "text" ? (
+									<span key={key}>{segment.text}</span>
+								) : (
+									<CitationMarker
+										citedText={segment.text}
+										citationNumber={segment.citationNumber}
+										key={key}
+										quote={segment.quote}
+										sourceText={segment.sourceText}
+										title={`${segment.sourceTitle}, ${segment.section}, ${segment.locator}`}
+										to={`#${citationElementId(segment.citationHandle)}`}
+									/>
+								),
+							)}
+						</p>
+						{aiAnswer.claims?.length ? (
+							<ClaimVerificationPanel claims={aiAnswer.claims} />
+						) : null}
+					</>
 				) : null}
 
 				{aiAnswer?.status === "unavailable" ? (
@@ -229,6 +234,87 @@ function TraceWaterfallRow({
 			{detail ? <p className="mt-1 text-[#6f716d] text-xs">{detail}</p> : null}
 		</div>
 	);
+}
+
+type VerifiedClaim = NonNullable<
+	Extract<AiAnswer, { status: "ready" }>["claims"]
+>[number];
+
+function ClaimVerificationPanel({ claims }: { claims: VerifiedClaim[] }) {
+	const claimItems = withOccurrenceKeys(
+		claims,
+		(claim) => `${claim.text}:${claim.verification.status}`,
+	);
+
+	return (
+		<div className="mt-5 border-[#d7d8d1] border-t pt-4 text-sm leading-5">
+			<p className="mb-2 font-semibold text-[#20211f]">
+				Claim evidence support
+			</p>
+			<div className="grid gap-2">
+				{claimItems.map(({ item: claim, key }) => (
+					<ClaimVerificationCard claim={claim} key={key} />
+				))}
+			</div>
+		</div>
+	);
+}
+
+function ClaimVerificationCard({ claim }: { claim: VerifiedClaim }) {
+	const statusClassName = claimStatusClassName(claim.verification.status);
+
+	return (
+		<div className="border border-[#c9cac3] bg-[#fbfcf7] p-3">
+			<div className="mb-2 flex flex-wrap items-center gap-2">
+				<span
+					className={`border px-2 py-1 font-semibold text-xs ${statusClassName}`}
+				>
+					{claimStatusLabel(claim.verification.status)}
+				</span>
+				<span className="text-[#6f716d] text-xs">
+					source evidence support, not world-truth verification
+				</span>
+			</div>
+			<p className="text-[#20211f]">{claim.text}</p>
+			<p className="mt-2 text-[#4a4c48]">{claim.verification.rationale}</p>
+			<div className="mt-2 flex flex-wrap gap-2 text-xs">
+				{claim.verification.evidence.map((evidence) => (
+					<span
+						className="border border-[#d7d8d1] bg-[#ffffff] px-2 py-1 text-[#3b6d65]"
+						key={evidence.citationHandle}
+					>
+						{evidence.citationHandle}
+					</span>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function claimStatusClassName(status: VerifiedClaim["verification"]["status"]) {
+	switch (status) {
+		case "supported":
+			return "border-[#3b6d65] bg-[#d8eee7] text-[#2f5c55]";
+		case "weak":
+			return "border-[#a16c1b] bg-[#fff4d6] text-[#7a5013]";
+		case "contradicted":
+			return "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]";
+		case "missing":
+			return "border-[#6f716d] bg-[#efefea] text-[#4a4c48]";
+	}
+}
+
+function claimStatusLabel(status: VerifiedClaim["verification"]["status"]) {
+	switch (status) {
+		case "supported":
+			return "supported";
+		case "weak":
+			return "weak support";
+		case "contradicted":
+			return "contradicted";
+		case "missing":
+			return "missing support";
+	}
 }
 
 function traceStepKey(step: AiTraceStep): string {

@@ -58,6 +58,15 @@ export function QueryHistoryPanel({
 							<span className="tabular-nums">
 								{run.retrievalQueryCount} retrieval queries
 							</span>
+							{run.claimVerification ? (
+								<span className="tabular-nums">
+									{run.claimVerification.supported} supported /{" "}
+									{run.claimVerification.weak} weak /{" "}
+									{run.claimVerification.contradicted +
+										run.claimVerification.missing}{" "}
+									needs review
+								</span>
+							) : null}
 						</div>
 					</button>
 				))}

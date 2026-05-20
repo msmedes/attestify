@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { upgradePersistedSearchResponse } from "./history.server";
-import { searchResponseSchema } from "./response-schemas";
+import {
+	queryRunSummarySchema,
+	searchResponseSchema,
+} from "./response-schemas";
 import type { SearchResponse } from "./types";
 
 describe("history response compatibility", () => {
@@ -154,6 +157,34 @@ describe("history response compatibility", () => {
 			status: "unresolved",
 			reason:
 				"Persisted history citation is missing source text or quote evidence.",
+		});
+	});
+
+	it("accepts query run summaries with persisted claim verification counts", () => {
+		expect(
+			queryRunSummarySchema.parse({
+				id: "run-1",
+				createdAt: "2026-05-19T00:00:00.000Z",
+				query: "What is the mousetrap?",
+				answerStatus: "ready",
+				answerText: "Hamlet contains source-supported evidence.",
+				citationCount: 1,
+				retrievalQueryCount: 1,
+				claimVerification: {
+					total: 4,
+					supported: 1,
+					weak: 1,
+					contradicted: 1,
+					missing: 1,
+				},
+			}),
+		).toMatchObject({
+			claimVerification: {
+				supported: 1,
+				weak: 1,
+				contradicted: 1,
+				missing: 1,
+			},
 		});
 	});
 });
