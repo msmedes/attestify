@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { corpus, getCorpusStats, listSpans } from "./corpus";
+import {
+	type AttestationExtractor,
+	type AttestationVerifier,
+	InMemoryExtractionCache,
+} from "./ingestion";
 import { retrievalEvalCases } from "./retrieval-evals";
 import { searchCorpus, searchCorpusWithQueries } from "./search.server";
 
@@ -86,6 +91,174 @@ describe("searchCorpus", () => {
 		).toBe(true);
 	});
 
+	it("reruns citation selection after bounded lazy expansion promotes attestations", async () => {
+		const result = await searchCorpusWithQueries({
+			query:
+				"What does the lazy expansion marker say about the mousetrap in Hamlet?",
+			retrievalQueries: ["mousetrap Hamlet"],
+			chunkLimit: 1,
+			citationLimit: 20,
+			citationScoreFloor: 0,
+			lazyExpansion: {
+				cache: new InMemoryExtractionCache(),
+				extractor: createLazyTestExtractor(),
+				verifier: createAnchorVerifier(),
+				maxSpans: 1,
+				startedAt: "2026-05-19T00:00:00.000Z",
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			},
+		});
+
+		const lazyTrace = result.aiTrace?.steps.find(
+			(step) => step.stage === "lazy-expansion",
+		);
+
+		expect(lazyTrace).toMatchObject({
+			stage: "lazy-expansion",
+			status: "ready",
+			output: {
+				attempts: [
+					expect.objectContaining({
+						rawCandidates: 1,
+						verifiedCandidates: 1,
+						promotions: 1,
+						rejections: 0,
+						verificationResults: [
+							expect.objectContaining({ status: "verified" }),
+						],
+					}),
+				],
+			},
+		});
+		expect(
+			result.citations.some(
+				(citation) => citation.attestation.subject === "Lazy expansion marker",
+			),
+		).toBe(true);
+	});
+
+	it("reuses cached lazy extraction results on repeated queries over the same source area", async () => {
+		const cache = new InMemoryExtractionCache();
+		let extractionCalls = 0;
+		const extractor = createLazyTestExtractor(() => {
+			extractionCalls += 1;
+		});
+		const options = {
+			query:
+				"What does the lazy expansion marker say about the mousetrap in Hamlet?",
+			retrievalQueries: ["mousetrap Hamlet"],
+			chunkLimit: 1,
+			citationLimit: 20,
+			citationScoreFloor: 0,
+			lazyExpansion: {
+				cache,
+				extractor,
+				verifier: createAnchorVerifier(),
+				maxSpans: 1,
+				startedAt: "2026-05-19T00:00:00.000Z",
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			},
+		};
+
+		await searchCorpusWithQueries(options);
+		const second = await searchCorpusWithQueries(options);
+		const lazyTrace = second.aiTrace?.steps.find(
+			(step) => step.stage === "lazy-expansion",
+		);
+
+		expect(extractionCalls).toBe(1);
+		expect(lazyTrace).toMatchObject({
+			output: {
+				attempts: [expect.objectContaining({ cacheHit: true })],
+			},
+		});
+	});
+
+	it("bounds query-triggered lazy expansion and records skipped spans", async () => {
+		let extractionCalls = 0;
+		const result = await searchCorpusWithQueries({
+			query: "What does Hamlet say?",
+			retrievalQueries: ["Hamlet says"],
+			chunkLimit: 3,
+			citationLimit: 20,
+			citationScoreFloor: 0,
+			lazyExpansion: {
+				cache: new InMemoryExtractionCache(),
+				extractor: createLazyTestExtractor(() => {
+					extractionCalls += 1;
+				}),
+				verifier: createAnchorVerifier(),
+				maxSpans: 1,
+				startedAt: "2026-05-19T00:00:00.000Z",
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			},
+		});
+		const lazyTrace = result.aiTrace?.steps.find(
+			(step) => step.stage === "lazy-expansion",
+		);
+
+		expect(extractionCalls).toBe(1);
+		expect(lazyTrace).toMatchObject({
+			input: { maxSpans: 1 },
+			output: {
+				skipped: [
+					expect.objectContaining({ reason: "max-spans" }),
+					expect.objectContaining({ reason: "max-spans" }),
+				],
+			},
+		});
+	});
+
+	it("does not turn rejected lazy candidates into citations", async () => {
+		const result = await searchCorpusWithQueries({
+			query:
+				"What does the lazy expansion marker say about the mousetrap in Hamlet?",
+			retrievalQueries: ["mousetrap Hamlet"],
+			chunkLimit: 1,
+			citationLimit: 20,
+			citationScoreFloor: 0,
+			lazyExpansion: {
+				cache: new InMemoryExtractionCache(),
+				extractor: createLazyTestExtractor(),
+				verifier: {
+					verify: () => ({
+						status: "rejected",
+						reason: "fake verifier rejection",
+					}),
+				},
+				maxSpans: 1,
+				startedAt: "2026-05-19T00:00:00.000Z",
+				verifiedAt: "2026-05-19T00:00:01.000Z",
+			},
+		});
+		const lazyTrace = result.aiTrace?.steps.find(
+			(step) => step.stage === "lazy-expansion",
+		);
+
+		expect(lazyTrace).toMatchObject({
+			output: {
+				attempts: [
+					expect.objectContaining({
+						promotions: 0,
+						rejections: 1,
+						verificationResults: [
+							expect.objectContaining({
+								status: "rejected",
+								reason: "fake verifier rejection",
+							}),
+						],
+					}),
+				],
+				promotedAttestationIds: [],
+			},
+		});
+		expect(
+			result.citations.some(
+				(citation) => citation.attestation.subject === "Lazy expansion marker",
+			),
+		).toBe(false);
+	});
+
 	it.each(retrievalEvalCases)("passes retrieval eval: $id", async ({
 		expectedAnchorPattern,
 		expectedSourceId,
@@ -107,3 +280,34 @@ describe("searchCorpus", () => {
 		).toBe(true);
 	});
 });
+
+function createLazyTestExtractor(onExtract?: () => void): AttestationExtractor {
+	return {
+		extractorId: "lazy-test-extractor",
+		extractorVersion: "1.0.0",
+		extract({ span }) {
+			onExtract?.();
+
+			return [
+				{
+					type: "passage",
+					subject: "Lazy expansion marker",
+					predicate: "is supported by",
+					value: span.text,
+					context: "lazy expansion test",
+					anchorText: span.text.slice(0, 80),
+				},
+			];
+		},
+	};
+}
+
+function createAnchorVerifier(): AttestationVerifier {
+	return {
+		verify({ candidate, span }) {
+			return span.text.includes(candidate.anchorText)
+				? { status: "verified", method: "anchor-substring" }
+				: { status: "rejected", reason: "anchor missing from source span" };
+		},
+	};
+}

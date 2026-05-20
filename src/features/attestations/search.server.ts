@@ -17,11 +17,21 @@ import {
 	embedQueryText,
 	getEmbeddingConfig,
 } from "./embeddings.server";
+import {
+	type AttestationExtractor,
+	type AttestationVerifier,
+	type ExtractionCache,
+	type ExtractionSettings,
+	type LazyExtractionLifecycleResult,
+	runLazyExtractionLifecycle,
+} from "./ingestion";
 import type {
 	Attestation,
 	CitationUnit,
+	LazyExpansionTraceStep,
 	RetrievalChunk,
 	SearchResponse,
+	SourceDocument,
 	SourceKind,
 	SourceSpan,
 } from "./types";
@@ -64,6 +74,17 @@ type SearchCorpusWithQueriesOptions = {
 	chunkLimit?: number;
 	citationLimit?: number;
 	citationScoreFloor?: number;
+	lazyExpansion?: LazyExpansionOptions;
+};
+
+export type LazyExpansionOptions = {
+	extractor: AttestationExtractor;
+	verifier: AttestationVerifier;
+	cache: ExtractionCache;
+	settings?: ExtractionSettings;
+	maxSpans: number;
+	startedAt?: string;
+	verifiedAt?: string;
 };
 
 export async function searchCorpus(query: string): Promise<SearchResponse> {
@@ -83,6 +104,7 @@ export async function searchCorpusWithQueries({
 	chunkLimit = DEFAULT_CHUNK_LIMIT,
 	citationLimit = DEFAULT_CITATION_LIMIT,
 	citationScoreFloor = MIN_CITATION_SCORE,
+	lazyExpansion,
 }: SearchCorpusWithQueriesOptions): Promise<SearchResponse> {
 	await ensureIndex();
 
@@ -132,6 +154,13 @@ export async function searchCorpusWithQueries({
 		.sort((left, right) => right.score - left.score)
 		.slice(0, chunkLimit);
 
+	const lazyExpansionResult = lazyExpansion
+		? await runLazyExpansion({
+				options: lazyExpansion,
+				retrievalChunks,
+			})
+		: null;
+	const promotedBySpanId = lazyExpansionResult?.promotedBySpanId ?? new Map();
 	const citationCandidates = retrievalChunks
 		.flatMap((chunk) => {
 			const span = findSpan(chunk.spanId);
@@ -141,10 +170,18 @@ export async function searchCorpusWithQueries({
 				return [];
 			}
 
-			return span.attestations.map((attestation) =>
+			const citationSpan: SourceSpan = {
+				...span,
+				attestations: [
+					...span.attestations,
+					...(promotedBySpanId.get(span.spanId) ?? []),
+				],
+			};
+
+			return citationSpan.attestations.map((attestation) =>
 				buildCitationUnit({
 					attestation,
-					span,
+					span: citationSpan,
 					query: scoringQuery,
 					retrievalScore: chunk.score,
 				}),
@@ -162,10 +199,194 @@ export async function searchCorpusWithQueries({
 	return {
 		query,
 		retrievalQueries: normalizedRetrievalQueries,
+		...(lazyExpansionResult
+			? { aiTrace: { steps: [lazyExpansionResult.traceStep] } }
+			: {}),
 		answerLines: citations.slice(0, 4).map(formatAnswerLine),
 		citations,
 		retrievalChunks,
 		corpusStats: getCorpusStats(),
+	};
+}
+
+async function runLazyExpansion({
+	options,
+	retrievalChunks,
+}: {
+	options: LazyExpansionOptions;
+	retrievalChunks: RetrievalChunk[];
+}): Promise<{
+	promotedBySpanId: Map<string, Attestation[]>;
+	traceStep: LazyExpansionTraceStep;
+}> {
+	const maxSpans = Math.max(0, Math.floor(options.maxSpans));
+	const promotedBySpanId = new Map<string, Attestation[]>();
+	const attempts: LazyExpansionTraceStep["output"]["attempts"] = [];
+	const skipped: LazyExpansionTraceStep["output"]["skipped"] = [];
+	const promotedAttestationIds: string[] = [];
+
+	for (const chunk of retrievalChunks) {
+		if (attempts.length >= maxSpans) {
+			skipped.push({
+				spanId: chunk.spanId,
+				reason: "max-spans",
+			});
+			continue;
+		}
+
+		const source = findSource(chunk.sourceId);
+		const span = findSpan(chunk.spanId);
+		const lifecycleInput =
+			source && span ? toLifecycleInput(source, span) : null;
+
+		if (!source || !span || !lifecycleInput) {
+			skipped.push({
+				spanId: chunk.spanId,
+				reason: "missing-structured-ingestion",
+			});
+			continue;
+		}
+
+		const lifecycle = await runLazyExtractionLifecycle({
+			cache: options.cache,
+			extractor: options.extractor,
+			settings: options.settings,
+			snapshot: lifecycleInput.snapshot,
+			span: lifecycleInput.span,
+			startedAt: options.startedAt ?? new Date().toISOString(),
+			verifiedAt: options.verifiedAt ?? new Date().toISOString(),
+			verifier: options.verifier,
+		});
+		const promoted = lifecycle.promotedAttestations.map((attestation) =>
+			toSourceAttestation(attestation),
+		);
+
+		if (promoted.length > 0) {
+			promotedBySpanId.set(span.spanId, promoted);
+			promotedAttestationIds.push(
+				...lifecycle.promotedAttestations.map(
+					(attestation) => attestation.attestationId,
+				),
+			);
+		}
+
+		attempts.push(toLazyExpansionAttempt(span.spanId, lifecycle));
+	}
+
+	return {
+		promotedBySpanId,
+		traceStep: {
+			stage: "lazy-expansion",
+			status: maxSpans > 0 ? "ready" : "skipped",
+			input: {
+				maxSpans,
+				retrievedSpanIds: retrievalChunks.map((chunk) => chunk.spanId),
+			},
+			output: {
+				attempts,
+				promotedAttestationIds,
+				skipped,
+			},
+		},
+	};
+}
+
+function toLifecycleInput(
+	source: SourceDocument,
+	span: SourceSpan,
+): {
+	snapshot: Parameters<typeof runLazyExtractionLifecycle>[0]["snapshot"];
+	span: Parameters<typeof runLazyExtractionLifecycle>[0]["span"];
+} | null {
+	if (!source.ingestion || !span.ingestion) {
+		return null;
+	}
+
+	return {
+		snapshot: {
+			sourceId: source.ingestion.sourceId,
+			snapshotId: source.ingestion.snapshotId,
+			connectorId: source.ingestion.connectorId,
+			externalSourceId: source.ingestion.externalSourceId,
+			kind: source.kind,
+			title: source.title,
+			content: source.spans.map((sourceSpan) => sourceSpan.text).join("\n\n"),
+			contentHash: source.ingestion.contentHash ?? "",
+			snapshotVersion: source.ingestion.snapshotVersion ?? "",
+			attribution: source.attribution,
+			updatedAt: source.updatedAt,
+			sourceUrl: source.sourceUrl,
+		},
+		span: {
+			spanId: span.ingestion.spanId,
+			snapshotId: source.ingestion.snapshotId,
+			sourceId: source.ingestion.sourceId,
+			section: span.section,
+			locator: span.locator,
+			text: span.text,
+		},
+	};
+}
+
+function toSourceAttestation(
+	attestation: LazyExtractionLifecycleResult["promotedAttestations"][number],
+): Attestation {
+	return {
+		id: attestation.attestationId,
+		type: attestation.type as Attestation["type"],
+		subject: attestation.subject,
+		predicate: attestation.predicate,
+		value: attestation.value,
+		context: attestation.context,
+		anchorText: attestation.anchorText,
+		ingestion: {
+			status: "verified",
+			method: attestation.support.method,
+		},
+	};
+}
+
+function toLazyExpansionAttempt(
+	spanId: string,
+	lifecycle: LazyExtractionLifecycleResult,
+): LazyExpansionTraceStep["output"]["attempts"][number] {
+	return {
+		spanId,
+		cacheHit: lifecycle.records.some((record) => record.state === "cache-hit"),
+		rawCandidates: lifecycle.records.filter(
+			(record) => record.state === "raw-candidate",
+		).length,
+		verifiedCandidates: lifecycle.records.filter(
+			(record) => record.state === "verified-candidate",
+		).length,
+		promotions: lifecycle.records.filter(
+			(record) => record.state === "promoted",
+		).length,
+		rejections: lifecycle.records.filter(
+			(record) => record.state === "rejected",
+		).length,
+		verificationResults: lifecycle.records.flatMap((record) => {
+			if (record.state === "verified-candidate") {
+				return [
+					{
+						candidateId: record.candidate.candidateId,
+						status: "verified" as const,
+					},
+				];
+			}
+
+			if (record.state === "rejected") {
+				return [
+					{
+						candidateId: record.candidate.candidateId,
+						status: "rejected" as const,
+						reason: record.reason,
+					},
+				];
+			}
+
+			return [];
+		}),
 	};
 }
 

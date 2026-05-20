@@ -188,6 +188,7 @@ export type AiTraceStep =
 	| ConfigTraceStep
 	| RetrievalPlanTraceStep
 	| RetrievalTraceStep
+	| LazyExpansionTraceStep
 	| RerankTraceStep
 	| AnswerSynthesisTraceStep;
 
@@ -236,6 +237,35 @@ export type RetrievalTraceStep = {
 			score: number;
 		}>;
 		citationHandles: string[];
+	};
+};
+
+export type LazyExpansionTraceStep = {
+	stage: "lazy-expansion";
+	status: "ready" | "skipped";
+	input: {
+		maxSpans: number;
+		retrievedSpanIds: string[];
+	};
+	output: {
+		attempts: Array<{
+			spanId: string;
+			cacheHit: boolean;
+			rawCandidates: number;
+			verifiedCandidates: number;
+			promotions: number;
+			rejections: number;
+			verificationResults: Array<{
+				candidateId: string;
+				status: "verified" | "rejected";
+				reason?: string;
+			}>;
+		}>;
+		promotedAttestationIds: string[];
+		skipped: Array<{
+			spanId: string;
+			reason: string;
+		}>;
 	};
 };
 
