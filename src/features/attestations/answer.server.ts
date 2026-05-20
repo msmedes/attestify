@@ -723,13 +723,9 @@ function selectModelSegments(
 	);
 	const segments = modelClaims.flatMap((claim): ModelSegment[] => {
 		const text = claim.text.trim();
-		const citationHandles = selectClaimCitationHandles({
-			claimText: text,
-			modelCitationHandles: claim.citationHandles.filter((citationHandle) =>
-				validHandles.has(citationHandle),
-			),
-			citations,
-		});
+		const citationHandles = claim.citationHandles.filter((citationHandle) =>
+			validHandles.has(citationHandle),
+		);
 
 		if (!text || citationHandles.length === 0) {
 			return [];
@@ -746,49 +742,6 @@ function selectModelSegments(
 	});
 
 	return segments.length > 0 ? segments : fallback;
-}
-
-function selectClaimCitationHandles({
-	citations,
-	claimText,
-	modelCitationHandles,
-}: {
-	citations: CitationUnit[];
-	claimText: string;
-	modelCitationHandles: string[];
-}): string[] {
-	const ranked = citations
-		.map((citation) => ({
-			citationHandle: citation.citationHandle,
-			modelSelected: modelCitationHandles.includes(citation.citationHandle),
-			score: claimCitationScore(claimText, citation),
-		}))
-		.sort((left, right) => {
-			if (right.score !== left.score) {
-				return right.score - left.score;
-			}
-
-			return Number(right.modelSelected) - Number(left.modelSelected);
-		});
-	const top = ranked.at(0);
-
-	if (!top || top.score === 0) {
-		return modelCitationHandles.slice(0, 2);
-	}
-
-	const selected = [top.citationHandle];
-
-	for (const handle of modelCitationHandles) {
-		if (selected.length >= 2) {
-			break;
-		}
-
-		if (!selected.includes(handle)) {
-			selected.push(handle);
-		}
-	}
-
-	return selected;
 }
 
 function claimCitationScore(claimText: string, citation: CitationUnit): number {
