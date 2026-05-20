@@ -267,6 +267,10 @@ function ClaimVerificationCard({ claim }: { claim: VerifiedClaim }) {
 }
 
 function TraceStepCard({ index, step }: { index: number; step: AiTraceStep }) {
+	if (step.stage === "evidence-loop") {
+		return <EvidenceLoopTraceCard index={index} step={step} />;
+	}
+
 	return (
 		<details className="group border border-[#c9cac3] bg-[#fbfcf7]">
 			<summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 font-medium text-[#20211f] transition-colors hover:bg-[#f4f5ef] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px]">
@@ -289,6 +293,146 @@ function TraceStepCard({ index, step }: { index: number; step: AiTraceStep }) {
 				{"error" in step ? <TraceRow label="error" value={step.error} /> : null}
 			</div>
 		</details>
+	);
+}
+
+type EvidenceLoopStep = Extract<AiTraceStep, { stage: "evidence-loop" }>;
+
+const loopStopReasonUi: Record<
+	EvidenceLoopStep["output"]["stopReason"],
+	{ className: string; label: string }
+> = {
+	"enough-evidence": {
+		className: "border-[#3b6d65] bg-[#d8eee7] text-[#2f5c55]",
+		label: "enough evidence",
+	},
+	"insufficient-evidence": {
+		className: "border-[#6f716d] bg-[#efefea] text-[#4a4c48]",
+		label: "insufficient evidence",
+	},
+	"budget-exhausted": {
+		className: "border-[#a16c1b] bg-[#fff4d6] text-[#7a5013]",
+		label: "budget exhausted",
+	},
+	"invalid-action": {
+		className: "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]",
+		label: "invalid action",
+	},
+	"tool-error": {
+		className: "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]",
+		label: "tool error",
+	},
+	"model-unavailable": {
+		className: "border-[#9f3325] bg-[#ffe1dc] text-[#7f291e]",
+		label: "model unavailable",
+	},
+};
+
+function EvidenceLoopTraceCard({
+	index,
+	step,
+}: {
+	index: number;
+	step: EvidenceLoopStep;
+}) {
+	const stopReason = loopStopReasonUi[step.output.stopReason];
+	const usage = step.output.budgetUsage;
+
+	return (
+		<details className="group border border-[#c9cac3] bg-[#fbfcf7]" open>
+			<summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 font-medium text-[#20211f] transition-colors hover:bg-[#f4f5ef] focus-visible:outline-2 focus-visible:outline-[#3b6d65] focus-visible:outline-offset-[-2px]">
+				<span className="inline-block text-[#3b6d65] transition-transform group-open:rotate-90">
+					▸
+				</span>
+				<span>
+					{index + 1}. evidence loop · {step.status} · {step.durationMs}ms
+				</span>
+				<span
+					className={`ml-auto border px-2 py-1 text-xs ${stopReason.className}`}
+				>
+					{stopReason.label}
+				</span>
+			</summary>
+			<div className="grid gap-3 border-[#d7d8d1] border-t p-3 text-[#4a4c48]">
+				<div className="grid gap-2 sm:grid-cols-5">
+					<TraceMetric label="iterations" value={String(usage.iterations)} />
+					<TraceMetric label="model calls" value={String(usage.modelCalls)} />
+					<TraceMetric label="retrieved" value={String(usage.retrievedSpans)} />
+					<TraceMetric label="inspected" value={String(usage.inspectedSpans)} />
+					<TraceMetric
+						label="extracted"
+						value={String(usage.extractionCalls)}
+					/>
+				</div>
+				<div className="grid gap-2">
+					{step.output.iterations.map((iteration) => (
+						<EvidenceLoopIterationRow
+							iteration={iteration}
+							key={iteration.iteration}
+						/>
+					))}
+				</div>
+				{step.output.consideredEvidence.length > 0 ? (
+					<div>
+						<p className="mb-1 font-medium text-[#20211f]">
+							considered evidence
+						</p>
+						<div className="flex flex-wrap gap-2">
+							{step.output.consideredEvidence.map((evidence) => (
+								<span
+									className="border border-[#d7d8d1] bg-[#ffffff] px-2 py-1 text-[#3b6d65] text-xs"
+									key={evidence.spanId}
+								>
+									{evidence.title} · {evidence.locator}
+								</span>
+							))}
+						</div>
+					</div>
+				) : null}
+			</div>
+		</details>
+	);
+}
+
+function EvidenceLoopIterationRow({
+	iteration,
+}: {
+	iteration: EvidenceLoopStep["output"]["iterations"][number];
+}) {
+	const action = iteration.validatedAction?.type ?? "rejected";
+	const summary = iteration.resultSummary;
+
+	return (
+		<div className="border border-[#d7d8d1] bg-[#ffffff] p-2">
+			<div className="flex flex-wrap items-center gap-2">
+				<span className="font-semibold text-[#20211f] text-xs">
+					iteration {iteration.iteration}
+				</span>
+				<span className="border border-[#c9cac3] bg-[#f4f5ef] px-2 py-1 text-[#4a4c48] text-xs">
+					{action}
+				</span>
+				{iteration.rejectedAction ? (
+					<span className="border border-[#9f3325] bg-[#ffe1dc] px-2 py-1 text-[#7f291e] text-xs">
+						{iteration.rejectedAction.reason}
+					</span>
+				) : null}
+			</div>
+			{summary ? (
+				<div className="mt-2 flex flex-wrap gap-2 text-xs">
+					<span>{summary.chunks} chunks</span>
+					<span>{summary.citations} citations</span>
+					{summary.inspectedSpans ? (
+						<span>{summary.inspectedSpans.length} inspected</span>
+					) : null}
+					{summary.extraction ? (
+						<span>
+							{summary.extraction.promotedAttestationIds.length} promoted /{" "}
+							{summary.extraction.rejectedCandidateCount} rejected
+						</span>
+					) : null}
+				</div>
+			) : null}
+		</div>
 	);
 }
 

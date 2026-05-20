@@ -1,9 +1,11 @@
 /**
  * @vitest-environment jsdom
  */
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { AnswerPanel } from "./AnswerPanel";
+
+afterEach(() => cleanup());
 
 describe("AnswerPanel claim verification diagnostics", () => {
 	it("renders claim support statuses and evidence handles distinctly", () => {
@@ -39,6 +41,105 @@ describe("AnswerPanel claim verification diagnostics", () => {
 		expect(screen.getByText("att:3#span:3")).toBeTruthy();
 	});
 });
+
+describe("AnswerPanel evidence-loop trace diagnostics", () => {
+	it.each([
+		["enough-evidence", "enough evidence"],
+		["insufficient-evidence", "insufficient evidence"],
+		["budget-exhausted", "budget exhausted"],
+		["invalid-action", "invalid action"],
+		["tool-error", "tool error"],
+	] as const)("renders %s stop reason distinctly", (stopReason, label) => {
+		render(
+			<AnswerPanel
+				aiTrace={{
+					steps: [evidenceLoopStep(stopReason)],
+				}}
+				lines={[]}
+				query="What happened?"
+				retrievalQueries={["What happened?"]}
+			/>,
+		);
+
+		expect(screen.getByText(label)).toBeTruthy();
+		expect(screen.getByText("iteration 1")).toBeTruthy();
+		expect(screen.getByText("search")).toBeTruthy();
+		expect(screen.getByText("1 promoted / 0 rejected")).toBeTruthy();
+		expect(screen.getByText("considered evidence")).toBeTruthy();
+	});
+});
+
+function evidenceLoopStep(
+	stopReason:
+		| "enough-evidence"
+		| "insufficient-evidence"
+		| "budget-exhausted"
+		| "invalid-action"
+		| "tool-error",
+) {
+	return {
+		stage: "evidence-loop" as const,
+		status:
+			stopReason === "enough-evidence"
+				? ("ready" as const)
+				: ("stopped" as const),
+		durationMs: 42,
+		input: {
+			query: "What happened?",
+			budgets: {
+				maxIterations: 4,
+				maxModelCalls: 4,
+				maxRetrievedSpans: 80,
+				maxInspectedSpans: 8,
+				maxExtractionCalls: 2,
+				maxElapsedMs: 8000,
+			},
+		},
+		output: {
+			stopReason,
+			budgetUsage: {
+				iterations: 2,
+				modelCalls: 2,
+				retrievedSpans: 3,
+				inspectedSpans: 1,
+				extractionCalls: 1,
+				elapsedMs: 42,
+			},
+			iterations: [
+				{
+					iteration: 1,
+					requestedAction: { type: "search", queries: ["query"] },
+					validatedAction: {
+						type: "search" as const,
+						queries: ["query"],
+						exactPhrases: [],
+					},
+					resultSummary: {
+						chunks: 3,
+						citations: 1,
+						citationHandles: ["att:1#span:1"],
+						extraction: {
+							attemptedSpanIds: ["span:1"],
+							promotedAttestationIds: ["att:1"],
+							rejectedCandidateCount: 0,
+							verifiedCandidateCount: 1,
+						},
+					},
+				},
+			],
+			consideredEvidence: [
+				{
+					spanId: "span:1",
+					sourceId: "source:1",
+					title: "Source",
+					section: "Section",
+					locator: "paragraph 1",
+					textPreview: "Evidence preview",
+				},
+			],
+		},
+	};
+}
 
 function claim(
 	text: string,
