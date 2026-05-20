@@ -128,9 +128,7 @@ export async function answerCorpus(
 		(step) =>
 			(step.stage === "retrieval-plan" && step.status === "failed") ||
 			(step.stage === "evidence-loop" &&
-				["invalid-action", "model-unavailable", "tool-error"].includes(
-					step.output.stopReason,
-				)),
+				step.output.stopReason !== "enough-evidence"),
 	);
 	if (failedPlan) {
 		const response = {

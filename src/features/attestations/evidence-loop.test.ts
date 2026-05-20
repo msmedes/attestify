@@ -64,6 +64,48 @@ describe("runEvidenceLoop", () => {
 		expect(result.traceStep.output.budgetUsage.iterations).toBe(1);
 	});
 
+	it("allows an explicit stop after reaching the retrieved span budget exactly", async () => {
+		const result = await runEvidenceLoop({
+			budgets: {
+				maxIterations: 3,
+				maxModelCalls: 3,
+				maxRetrievedSpans: 40,
+				maxElapsedMs: 8_000,
+			},
+			planner: sequencePlanner([
+				{ type: "search", queries: ["broad Hamlet query"] },
+				{ type: "stop", reason: "enough-evidence" },
+			]),
+			query: "What happens in Hamlet?",
+			tools: {
+				search: async () => fakeSearchResponse({ citations: 1, chunks: 40 }),
+			},
+		});
+
+		expect(result.traceStep.output.stopReason).toBe("enough-evidence");
+		expect(result.traceStep.output.budgetUsage.retrievedSpans).toBe(40);
+		expect(result.traceStep.output.iterations).toHaveLength(2);
+	});
+
+	it("stops with budget exhaustion when a search exceeds the retrieved span budget", async () => {
+		const result = await runEvidenceLoop({
+			budgets: {
+				maxIterations: 3,
+				maxModelCalls: 3,
+				maxRetrievedSpans: 40,
+				maxElapsedMs: 8_000,
+			},
+			planner: sequencePlanner([{ type: "search", queries: ["too broad"] }]),
+			query: "What happens?",
+			tools: {
+				search: async () => fakeSearchResponse({ citations: 1, chunks: 41 }),
+			},
+		});
+
+		expect(result.traceStep.status).toBe("stopped");
+		expect(result.traceStep.output.stopReason).toBe("budget-exhausted");
+	});
+
 	it("rejects malformed planner actions without running tools", async () => {
 		let searchCalls = 0;
 		const result = await runEvidenceLoop({
@@ -87,6 +129,32 @@ describe("runEvidenceLoop", () => {
 					rejectedAction: expect.objectContaining({
 						reason: expect.stringContaining("Expected 'search' | 'stop'"),
 					}),
+				}),
+			],
+		});
+	});
+
+	it("rejects search actions that normalize to no usable queries", async () => {
+		let searchCalls = 0;
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([{ type: "search", queries: ["   "] }]),
+			query: "What is the mousetrap?",
+			tools: {
+				search: async () => {
+					searchCalls += 1;
+					return fakeSearchResponse({ citations: 1, chunks: 1 });
+				},
+			},
+		});
+
+		expect(searchCalls).toBe(0);
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.objectContaining({
+					rejectedAction: {
+						reason: "Search action contained no non-empty queries.",
+					},
 				}),
 			],
 		});

@@ -11,7 +11,7 @@ import type {
 const DEFAULT_BUDGETS = {
 	maxIterations: 3,
 	maxModelCalls: 3,
-	maxRetrievedSpans: 40,
+	maxRetrievedSpans: 80,
 	maxElapsedMs: 8_000,
 };
 
@@ -93,8 +93,7 @@ export async function runEvidenceLoop({
 
 		if (
 			budgetUsage.modelCalls >= budgets.maxModelCalls ||
-			budgetUsage.retrievedSpans >= budgets.maxRetrievedSpans ||
-			budgetUsage.elapsedMs >= budgets.maxElapsedMs
+			isBudgetExhausted(budgetUsage, budgets)
 		) {
 			stopReason = "budget-exhausted";
 			break;
@@ -139,7 +138,40 @@ export async function runEvidenceLoop({
 			break;
 		}
 
+		if (
+			isBudgetExhausted(
+				currentBudgetUsage({
+					startedAt,
+					iterations: iteration - 1,
+					modelCalls,
+					retrievedSpans,
+				}),
+				budgets,
+			)
+		) {
+			stopReason = "budget-exhausted";
+			iterations.push({
+				iteration,
+				requestedAction,
+				rejectedAction: {
+					reason: "Budget exhausted before action could run.",
+				},
+			});
+			break;
+		}
+
 		const action = normalizeEvidenceAction(parsedAction.data);
+		if (action.type === "search" && action.queries.length === 0) {
+			stopReason = "invalid-action";
+			iterations.push({
+				iteration,
+				requestedAction,
+				rejectedAction: {
+					reason: "Search action contained no non-empty queries.",
+				},
+			});
+			break;
+		}
 		if (isRepeatedAction(action, iterations)) {
 			stopReason = "invalid-action";
 			iterations.push({
@@ -154,7 +186,15 @@ export async function runEvidenceLoop({
 		}
 
 		if (action.type === "stop") {
-			stopReason = action.reason;
+			const currentUsage = currentBudgetUsage({
+				startedAt,
+				iterations: iteration,
+				modelCalls,
+				retrievedSpans,
+			});
+			stopReason = isBudgetExhausted(currentUsage, budgets)
+				? "budget-exhausted"
+				: action.reason;
 			iterations.push({
 				iteration,
 				requestedAction,
@@ -201,6 +241,21 @@ export async function runEvidenceLoop({
 				),
 			},
 		});
+
+		if (
+			isBudgetExhausted(
+				currentBudgetUsage({
+					startedAt,
+					iterations: iteration,
+					modelCalls,
+					retrievedSpans,
+				}),
+				budgets,
+			)
+		) {
+			stopReason = "budget-exhausted";
+			break;
+		}
 	}
 
 	const budgetUsage = currentBudgetUsage({
@@ -253,6 +308,17 @@ function currentBudgetUsage({
 		retrievedSpans,
 		elapsedMs: elapsedMs(startedAt),
 	};
+}
+
+function isBudgetExhausted(
+	usage: EvidenceLoopTraceStep["output"]["budgetUsage"],
+	budgets: EvidenceLoopBudgets,
+): boolean {
+	return (
+		usage.modelCalls > budgets.maxModelCalls ||
+		usage.retrievedSpans > budgets.maxRetrievedSpans ||
+		usage.elapsedMs >= budgets.maxElapsedMs
+	);
 }
 
 function normalizeEvidenceAction(action: EvidenceAction): EvidenceAction {
