@@ -12,6 +12,7 @@ const DEFAULT_BUDGETS = {
 	maxIterations: 3,
 	maxModelCalls: 3,
 	maxRetrievedSpans: 80,
+	maxInspectedSpans: 8,
 	maxElapsedMs: 8_000,
 };
 
@@ -26,8 +27,14 @@ const stopActionSchema = z.object({
 	reason: z.enum(["enough-evidence", "insufficient-evidence"]),
 });
 
+const inspectActionSchema = z.object({
+	type: z.literal("inspect"),
+	spanIds: z.array(z.string()).min(1).max(5),
+});
+
 export const evidenceActionSchema = z.discriminatedUnion("type", [
 	searchActionSchema,
+	inspectActionSchema,
 	stopActionSchema,
 ]);
 
@@ -40,6 +47,7 @@ export type EvidenceLoopPlannerInput = {
 	iteration: number;
 	previousActions: EvidenceLoopTraceStep["output"]["iterations"];
 	citations: CitationUnit[];
+	inspectedSpans: InspectedEvidenceSpan[];
 	retrievalChunks: RetrievalChunk[];
 	budgetUsage: EvidenceLoopTraceStep["output"]["budgetUsage"];
 };
@@ -49,11 +57,21 @@ export type EvidenceLoopPlanner = (
 ) => Promise<unknown>;
 
 export type EvidenceLoopTools = {
+	inspect: (input: { spanIds: string[] }) => Promise<InspectedEvidenceSpan[]>;
 	search: (input: {
 		query: string;
 		queries: string[];
 		exactPhrases: string[];
 	}) => Promise<SearchResponse>;
+};
+
+export type InspectedEvidenceSpan = {
+	spanId: string;
+	sourceId: string;
+	title: string;
+	section: string;
+	locator: string;
+	text: string;
 };
 
 export type EvidenceLoopResult = {
@@ -82,10 +100,12 @@ export async function runEvidenceLoop({
 	let stopReason: EvidenceLoopStopReason | null = null;
 	let modelCalls = 0;
 	let retrievedSpans = 0;
+	const inspectedSpans = new Map<string, InspectedEvidenceSpan>();
 
 	for (let iteration = 1; iteration <= budgets.maxIterations; iteration += 1) {
 		const budgetUsage = currentBudgetUsage({
 			startedAt,
+			inspectedSpans: inspectedSpans.size,
 			iterations: iteration - 1,
 			modelCalls,
 			retrievedSpans,
@@ -107,6 +127,7 @@ export async function runEvidenceLoop({
 				iteration,
 				previousActions: iterations,
 				citations: search?.citations ?? [],
+				inspectedSpans: [...inspectedSpans.values()],
 				retrievalChunks: search?.retrievalChunks ?? [],
 				budgetUsage,
 			});
@@ -142,6 +163,7 @@ export async function runEvidenceLoop({
 			isBudgetExhausted(
 				currentBudgetUsage({
 					startedAt,
+					inspectedSpans: inspectedSpans.size,
 					iterations: iteration - 1,
 					modelCalls,
 					retrievedSpans,
@@ -172,6 +194,39 @@ export async function runEvidenceLoop({
 			});
 			break;
 		}
+		if (action.type === "inspect" && action.spanIds.length === 0) {
+			stopReason = "invalid-action";
+			iterations.push({
+				iteration,
+				requestedAction,
+				rejectedAction: {
+					reason: "Inspect action contained no non-empty span IDs.",
+				},
+			});
+			break;
+		}
+		if (action.type === "inspect") {
+			const availableSpanIds = new Set([
+				...(search?.retrievalChunks.map((chunk) => chunk.spanId) ?? []),
+				...inspectedSpans.keys(),
+			]);
+			const unknownSpanIds = action.spanIds.filter(
+				(spanId) => !availableSpanIds.has(spanId),
+			);
+
+			if (unknownSpanIds.length > 0) {
+				stopReason = "invalid-action";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason: `Inspect action referenced unavailable span IDs: ${unknownSpanIds.join(", ")}.`,
+					},
+				});
+				break;
+			}
+		}
 		if (isRepeatedAction(action, iterations)) {
 			stopReason = "invalid-action";
 			iterations.push({
@@ -188,6 +243,7 @@ export async function runEvidenceLoop({
 		if (action.type === "stop") {
 			const currentUsage = currentBudgetUsage({
 				startedAt,
+				inspectedSpans: inspectedSpans.size,
 				iterations: iteration,
 				modelCalls,
 				retrievedSpans,
@@ -201,6 +257,86 @@ export async function runEvidenceLoop({
 				validatedAction: traceAction(action),
 			});
 			break;
+		}
+
+		if (action.type === "inspect") {
+			const inspectBudgetUsage = currentBudgetUsage({
+				startedAt,
+				iterations: iteration,
+				inspectedSpans: inspectedSpans.size + action.spanIds.length,
+				modelCalls,
+				retrievedSpans,
+			});
+			if (isBudgetExhausted(inspectBudgetUsage, budgets)) {
+				stopReason = "budget-exhausted";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason: "Inspect action exceeded evidence-loop budget.",
+					},
+				});
+				break;
+			}
+
+			try {
+				const inspected = await tools.inspect({ spanIds: action.spanIds });
+				for (const span of inspected) {
+					inspectedSpans.set(span.spanId, span);
+				}
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					resultSummary: {
+						chunks: search?.retrievalChunks.length ?? 0,
+						citations: search?.citations.length ?? 0,
+						citationHandles:
+							search?.citations.map((citation) => citation.citationHandle) ??
+							[],
+						inspectedSpans: inspected.map((span) => ({
+							spanId: span.spanId,
+							sourceId: span.sourceId,
+							title: span.title,
+							section: span.section,
+							locator: span.locator,
+						})),
+					},
+				});
+			} catch (error) {
+				stopReason = "tool-error";
+				iterations.push({
+					iteration,
+					requestedAction,
+					validatedAction: traceAction(action),
+					rejectedAction: {
+						reason:
+							error instanceof Error
+								? `Inspection failed: ${error.message}`
+								: "Inspection failed.",
+					},
+				});
+				break;
+			}
+
+			if (
+				isBudgetExhausted(
+					currentBudgetUsage({
+						startedAt,
+						inspectedSpans: inspectedSpans.size,
+						iterations: iteration,
+						modelCalls,
+						retrievedSpans,
+					}),
+					budgets,
+				)
+			) {
+				stopReason = "budget-exhausted";
+				break;
+			}
+
+			continue;
 		}
 
 		try {
@@ -246,6 +382,7 @@ export async function runEvidenceLoop({
 			isBudgetExhausted(
 				currentBudgetUsage({
 					startedAt,
+					inspectedSpans: inspectedSpans.size,
 					iterations: iteration,
 					modelCalls,
 					retrievedSpans,
@@ -261,6 +398,7 @@ export async function runEvidenceLoop({
 	const budgetUsage = currentBudgetUsage({
 		startedAt,
 		iterations: iterations.length,
+		inspectedSpans: inspectedSpans.size,
 		modelCalls,
 		retrievedSpans,
 	});
@@ -286,6 +424,14 @@ export async function runEvidenceLoop({
 				stopReason: finalStopReason,
 				budgetUsage,
 				iterations,
+				consideredEvidence: [...inspectedSpans.values()].map((span) => ({
+					spanId: span.spanId,
+					sourceId: span.sourceId,
+					title: span.title,
+					section: span.section,
+					locator: span.locator,
+					textPreview: truncateForTrace(span.text),
+				})),
 			},
 		},
 	};
@@ -293,11 +439,13 @@ export async function runEvidenceLoop({
 
 function currentBudgetUsage({
 	startedAt,
+	inspectedSpans,
 	iterations,
 	modelCalls,
 	retrievedSpans,
 }: {
 	startedAt: number;
+	inspectedSpans?: number;
 	iterations: number;
 	modelCalls: number;
 	retrievedSpans: number;
@@ -306,6 +454,7 @@ function currentBudgetUsage({
 		iterations,
 		modelCalls,
 		retrievedSpans,
+		inspectedSpans: inspectedSpans ?? 0,
 		elapsedMs: elapsedMs(startedAt),
 	};
 }
@@ -317,6 +466,7 @@ function isBudgetExhausted(
 	return (
 		usage.modelCalls > budgets.maxModelCalls ||
 		usage.retrievedSpans > budgets.maxRetrievedSpans ||
+		usage.inspectedSpans > budgets.maxInspectedSpans ||
 		usage.elapsedMs >= budgets.maxElapsedMs
 	);
 }
@@ -324,6 +474,13 @@ function isBudgetExhausted(
 function normalizeEvidenceAction(action: EvidenceAction): EvidenceAction {
 	if (action.type === "stop") {
 		return action;
+	}
+
+	if (action.type === "inspect") {
+		return {
+			type: "inspect",
+			spanIds: normalizeList(action.spanIds, 120),
+		};
 	}
 
 	return {
@@ -375,6 +532,13 @@ function traceAction(
 		};
 	}
 
+	if (action.type === "inspect") {
+		return {
+			type: "inspect",
+			spanIds: action.spanIds,
+		};
+	}
+
 	return {
 		type: "search",
 		queries: action.queries,
@@ -384,4 +548,10 @@ function traceAction(
 
 function elapsedMs(startedAt: number): number {
 	return Math.max(0, Math.round(performance.now() - startedAt));
+}
+
+function truncateForTrace(text: string): string {
+	const compact = text.replace(/\s+/g, " ").trim();
+
+	return compact.length > 500 ? `${compact.slice(0, 500)}...` : compact;
 }

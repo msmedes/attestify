@@ -12,6 +12,7 @@ describe("runEvidenceLoop", () => {
 			planner: sequencePlanner(actions),
 			query: "What is the mousetrap in Hamlet?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => fakeSearchResponse({ citations: 1, chunks: 2 }),
 			},
 		});
@@ -51,11 +52,13 @@ describe("runEvidenceLoop", () => {
 				maxIterations: 1,
 				maxModelCalls: 3,
 				maxRetrievedSpans: 40,
+				maxInspectedSpans: 8,
 				maxElapsedMs: 8_000,
 			},
 			planner: sequencePlanner([{ type: "search", queries: ["Alice rabbit"] }]),
 			query: "What does Alice see?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
 			},
 		});
@@ -70,6 +73,7 @@ describe("runEvidenceLoop", () => {
 				maxIterations: 3,
 				maxModelCalls: 3,
 				maxRetrievedSpans: 40,
+				maxInspectedSpans: 8,
 				maxElapsedMs: 8_000,
 			},
 			planner: sequencePlanner([
@@ -78,6 +82,7 @@ describe("runEvidenceLoop", () => {
 			]),
 			query: "What happens in Hamlet?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => fakeSearchResponse({ citations: 1, chunks: 40 }),
 			},
 		});
@@ -93,11 +98,13 @@ describe("runEvidenceLoop", () => {
 				maxIterations: 3,
 				maxModelCalls: 3,
 				maxRetrievedSpans: 40,
+				maxInspectedSpans: 8,
 				maxElapsedMs: 8_000,
 			},
 			planner: sequencePlanner([{ type: "search", queries: ["too broad"] }]),
 			query: "What happens?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => fakeSearchResponse({ citations: 1, chunks: 41 }),
 			},
 		});
@@ -112,6 +119,7 @@ describe("runEvidenceLoop", () => {
 			planner: sequencePlanner([{ type: "browse_web", query: "Hamlet" }]),
 			query: "What is the mousetrap?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => {
 					searchCalls += 1;
 					return fakeSearchResponse({ citations: 1, chunks: 1 });
@@ -127,7 +135,9 @@ describe("runEvidenceLoop", () => {
 				expect.objectContaining({
 					requestedAction: { type: "browse_web", query: "Hamlet" },
 					rejectedAction: expect.objectContaining({
-						reason: expect.stringContaining("Expected 'search' | 'stop'"),
+						reason: expect.stringContaining(
+							"Expected 'search' | 'inspect' | 'stop'",
+						),
 					}),
 				}),
 			],
@@ -140,6 +150,7 @@ describe("runEvidenceLoop", () => {
 			planner: sequencePlanner([{ type: "search", queries: ["   "] }]),
 			query: "What is the mousetrap?",
 			tools: {
+				inspect: fakeInspect,
 				search: async () => {
 					searchCalls += 1;
 					return fakeSearchResponse({ citations: 1, chunks: 1 });
@@ -167,6 +178,165 @@ describe("runEvidenceLoop", () => {
 		expect(fallback.citations).toHaveLength(1);
 		expect(fallback.aiTrace?.steps).toHaveLength(0);
 	});
+
+	it("inspects initial spans and uses a narrower follow-up search for final citations", async () => {
+		const searches: string[][] = [];
+		const result = await runEvidenceLoop({
+			planner: async ({ inspectedSpans, iteration, retrievalChunks }) => {
+				if (iteration === 1) {
+					return { type: "search", queries: ["rabbit hole Alice"] };
+				}
+
+				if (iteration === 2) {
+					return {
+						type: "inspect",
+						spanIds: [retrievalChunks[0]?.spanId ?? "missing"],
+					};
+				}
+
+				if (iteration === 3 && inspectedSpans[0]?.text.includes("watch")) {
+					return {
+						type: "search",
+						queries: ["white rabbit watch waistcoat-pocket"],
+						exactPhrases: ["waistcoat-pocket"],
+					};
+				}
+
+				return { type: "stop", reason: "enough-evidence" };
+			},
+			query: "What does Alice see at the rabbit-hole?",
+			tools: {
+				inspect: async ({ spanIds }) =>
+					spanIds.map((spanId) => ({
+						spanId,
+						sourceId: "alice-in-wonderland",
+						title: "Alice's Adventures in Wonderland",
+						section: "Chapter 1",
+						locator: "paragraph 2",
+						text: "Alice inspected the rabbit-hole span and saw a watch in the Rabbit's waistcoat-pocket.",
+					})),
+				search: async ({ queries }) => {
+					searches.push(queries);
+
+					return searches.length === 1
+						? fakeSearchResponse({
+								citations: 0,
+								chunks: 1,
+								sourceId: "alice-in-wonderland",
+								text: "A broad rabbit-hole passage needs inspection.",
+							})
+						: fakeSearchResponse({
+								citations: 1,
+								chunks: 1,
+								sourceId: "alice-in-wonderland",
+								text: "The Rabbit took a watch out of its waistcoat-pocket.",
+							});
+				},
+			},
+		});
+
+		expect(searches).toEqual([
+			["rabbit hole Alice"],
+			["white rabbit watch waistcoat-pocket"],
+		]);
+		expect(result.search?.citations).toHaveLength(1);
+		expect(result.traceStep.output.consideredEvidence).toEqual([
+			expect.objectContaining({
+				spanId: "span-1",
+				sourceId: "alice-in-wonderland",
+				textPreview: expect.stringContaining("watch"),
+			}),
+		]);
+		expect(
+			result.traceStep.output.consideredEvidence.map((span) => span.spanId),
+		).not.toEqual(
+			result.search?.citations.map((citation) => citation.citationHandle),
+		);
+		expect(result.traceStep.output.iterations[1]).toMatchObject({
+			validatedAction: {
+				type: "inspect",
+				spanIds: ["span-1"],
+			},
+			resultSummary: {
+				inspectedSpans: [
+					expect.objectContaining({
+						spanId: "span-1",
+						sourceId: "alice-in-wonderland",
+					}),
+				],
+			},
+		});
+	});
+
+	it("rejects repeated inspection actions", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice rabbit"] },
+				{ type: "inspect", spanIds: ["span-1"] },
+				{ type: "inspect", spanIds: ["span-1"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.objectContaining({
+					validatedAction: {
+						type: "search",
+						queries: ["Alice rabbit"],
+						exactPhrases: [],
+					},
+				}),
+				expect.objectContaining({
+					validatedAction: {
+						type: "inspect",
+						spanIds: ["span-1"],
+					},
+				}),
+				expect.objectContaining({
+					rejectedAction: {
+						reason: "Repeated evidence action.",
+					},
+				}),
+			],
+		});
+	});
+
+	it("rejects inspection of spans the host has not retrieved", async () => {
+		const result = await runEvidenceLoop({
+			planner: sequencePlanner([
+				{ type: "search", queries: ["Alice rabbit"] },
+				{ type: "inspect", spanIds: ["missing-span"] },
+			]),
+			query: "What does Alice see?",
+			tools: {
+				inspect: fakeInspect,
+				search: async () => fakeSearchResponse({ citations: 0, chunks: 1 }),
+			},
+		});
+
+		expect(result.traceStep.output).toMatchObject({
+			stopReason: "invalid-action",
+			iterations: [
+				expect.any(Object),
+				expect.objectContaining({
+					validatedAction: {
+						type: "inspect",
+						spanIds: ["missing-span"],
+					},
+					rejectedAction: {
+						reason:
+							"Inspect action referenced unavailable span IDs: missing-span.",
+					},
+				}),
+			],
+		});
+	});
 });
 
 function sequencePlanner(actions: unknown[]): EvidenceLoopPlanner {
@@ -176,10 +346,18 @@ function sequencePlanner(actions: unknown[]): EvidenceLoopPlanner {
 function fakeSearchResponse({
 	chunks,
 	citations,
+	sourceId = "hamlet",
+	text = "The Mousetrap",
 }: {
 	chunks: number;
 	citations: number;
+	sourceId?: string;
+	text?: string;
 }): SearchResponse {
+	const title =
+		sourceId === "hamlet" ? "Hamlet" : "Alice's Adventures in Wonderland";
+	const kind = sourceId === "hamlet" ? "play" : "novel";
+
 	return {
 		query: "fake query",
 		queryMode: "agentic",
@@ -188,12 +366,12 @@ function fakeSearchResponse({
 		answerLines: [],
 		retrievalChunks: Array.from({ length: chunks }, (_, index) => ({
 			spanId: `span-${index + 1}`,
-			sourceId: "hamlet",
-			title: "Hamlet",
-			kind: "play",
+			sourceId,
+			title,
+			kind,
 			section: "Act 3",
 			locator: `paragraph ${index + 1}`,
-			text: "The Mousetrap",
+			text,
 			score: 1,
 		})),
 		citations: Array.from({ length: citations }, (_, index) => ({
@@ -207,9 +385,9 @@ function fakeSearchResponse({
 				anchorText: "The Mousetrap",
 			},
 			source: {
-				sourceId: "hamlet",
-				title: "Hamlet",
-				kind: "play",
+				sourceId,
+				title,
+				kind,
 				attribution: "Fixture",
 				updatedAt: "2026-05-20",
 			},
@@ -217,7 +395,7 @@ function fakeSearchResponse({
 				spanId: `span-${index + 1}`,
 				section: "Act 3",
 				locator: `paragraph ${index + 1}`,
-				text: "The Mousetrap",
+				text,
 			},
 			citationHandle: `att-${index + 1}#span-${index + 1}`,
 			citationIdentity: {
@@ -245,4 +423,15 @@ function fakeSearchResponse({
 			attestations: citations,
 		},
 	};
+}
+
+async function fakeInspect({ spanIds }: { spanIds: string[] }) {
+	return spanIds.map((spanId) => ({
+		spanId,
+		sourceId: "hamlet",
+		title: "Hamlet",
+		section: "Act 3",
+		locator: "paragraph 1",
+		text: "The Mousetrap",
+	}));
 }

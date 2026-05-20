@@ -5,7 +5,7 @@ import {
 	claimsSafeForAnswerSegments,
 	verifyAnswerClaims,
 } from "./claim-verification";
-import { getCorpusStats } from "./corpus";
+import { findSource, findSpan, getCorpusStats } from "./corpus";
 import { tokenize } from "./embed";
 import { getOpenAiUnavailableReason, serverEnv } from "./env.server";
 import {
@@ -194,6 +194,26 @@ async function runAgenticEvidenceLoop(
 		planner: createModelEvidencePlanner(),
 		query,
 		tools: {
+			inspect: async ({ spanIds }) =>
+				spanIds.flatMap((spanId) => {
+					const span = findSpan(spanId);
+					const source = span ? findSource(span.sourceId) : undefined;
+
+					if (!span || !source) {
+						return [];
+					}
+
+					return [
+						{
+							spanId: span.spanId,
+							sourceId: source.sourceId,
+							title: source.title,
+							section: span.section,
+							locator: span.locator,
+							text: span.text,
+						},
+					];
+				}),
 			search: ({ exactPhrases, queries }) =>
 				searchCorpusWithQueries({
 					query,
@@ -294,7 +314,13 @@ async function generateRetrievalPlan(query: string): Promise<RetrievalPlan> {
 function createModelEvidencePlanner(): EvidenceLoopPlanner {
 	const model = serverEnv.openAi.model;
 
-	return async ({ citations, iteration, query, retrievalChunks }) => {
+	return async ({
+		citations,
+		inspectedSpans,
+		iteration,
+		query,
+		retrievalChunks,
+	}) => {
 		if (iteration > 1 && citations.length > 0) {
 			return {
 				type: "stop",
@@ -308,9 +334,10 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 			systemPrompts: [
 				[
 					"You drive a bounded source-evidence loop.",
-					"You may request one typed action: search or stop.",
+					"You may request one typed action: search, inspect, or stop.",
 					"Do not answer the user question.",
 					"For the first iteration, request a search with 3 to 5 literal source-retrieval queries.",
+					"After a search, inspect only promising span IDs when seeing the full span text could help choose a narrower follow-up search.",
 					"Use exactPhrases for quoted terms, named objects, titles, unusual wording, and names.",
 					"If prior retrieved chunks and citations are enough to answer from source evidence, stop with reason enough-evidence.",
 					"If prior evidence is not enough and another search is unlikely to help, stop with reason insufficient-evidence.",
@@ -325,6 +352,13 @@ function createModelEvidencePlanner(): EvidenceLoopPlanner {
 						citationHandles: citations.map(
 							(citation) => citation.citationHandle,
 						),
+						inspectedSpans: inspectedSpans.map((span) => ({
+							spanId: span.spanId,
+							sourceId: span.sourceId,
+							title: span.title,
+							location: `${span.section}, ${span.locator}`,
+							text: truncateForTrace(span.text),
+						})),
 						retrievedChunks: retrievalChunks.slice(0, 8).map((chunk) => ({
 							spanId: chunk.spanId,
 							sourceId: chunk.sourceId,
