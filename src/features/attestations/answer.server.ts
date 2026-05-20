@@ -135,7 +135,10 @@ export async function answerCorpus(
 		(step) =>
 			(step.stage === "retrieval-plan" && step.status === "failed") ||
 			(step.stage === "evidence-loop" &&
-				step.output.stopReason !== "enough-evidence"),
+				shouldBlockAnswerSynthesisForEvidenceLoop({
+					citationCount: search.citations.length,
+					stopReason: step.output.stopReason,
+				})),
 	);
 	if (failedPlan) {
 		const response = {
@@ -272,6 +275,22 @@ async function runAgenticEvidenceLoop(
 	traceSteps.push(loop.traceStep, ...loop.searchTraceSteps);
 
 	return loop.search ?? emptyAgenticSearchResponse(query);
+}
+
+export function shouldBlockAnswerSynthesisForEvidenceLoop({
+	citationCount,
+	stopReason,
+}: {
+	citationCount: number;
+	stopReason: Extract<
+		AiTraceStep,
+		{ stage: "evidence-loop" }
+	>["output"]["stopReason"];
+}): boolean {
+	return (
+		stopReason !== "enough-evidence" &&
+		(stopReason !== "budget-exhausted" || citationCount === 0)
+	);
 }
 
 export function buildExtractionCitationChunks({

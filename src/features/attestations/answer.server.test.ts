@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildExtractionCitationChunks } from "./answer.server";
+import {
+	buildExtractionCitationChunks,
+	shouldBlockAnswerSynthesisForEvidenceLoop,
+} from "./answer.server";
 import type { SearchResponse } from "./types";
 
 describe("answerCorpus fallback", () => {
@@ -27,6 +30,35 @@ describe("answerCorpus fallback", () => {
 		expect(response.aiTrace?.steps.map((step) => step.stage)).not.toContain(
 			"evidence-loop",
 		);
+	});
+});
+
+describe("evidence loop answer boundary", () => {
+	it("allows answer synthesis when the loop exhausts budget after finding citations", () => {
+		expect(
+			shouldBlockAnswerSynthesisForEvidenceLoop({
+				citationCount: 3,
+				stopReason: "budget-exhausted",
+			}),
+		).toBe(false);
+	});
+
+	it("blocks answer synthesis when budget exhaustion found no citations", () => {
+		expect(
+			shouldBlockAnswerSynthesisForEvidenceLoop({
+				citationCount: 0,
+				stopReason: "budget-exhausted",
+			}),
+		).toBe(true);
+	});
+
+	it("blocks non-budget loop failures even with citations", () => {
+		expect(
+			shouldBlockAnswerSynthesisForEvidenceLoop({
+				citationCount: 3,
+				stopReason: "invalid-action",
+			}),
+		).toBe(true);
 	});
 });
 

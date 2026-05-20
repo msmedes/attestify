@@ -14,7 +14,7 @@ const DEFAULT_BUDGETS = {
 	maxExtractionCalls: 2,
 	maxRetrievedSpans: 80,
 	maxInspectedSpans: 8,
-	maxElapsedMs: 8_000,
+	maxElapsedMs: 30_000,
 };
 
 const searchActionSchema = z.object({

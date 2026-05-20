@@ -31,6 +31,7 @@ describe("runEvidenceLoop", () => {
 			modelCalls: 2,
 			retrievedSpans: 2,
 		});
+		expect(result.traceStep.input.budgets.maxElapsedMs).toBe(30_000);
 		expect(result.traceStep.output.iterations[0]).toMatchObject({
 			validatedAction: {
 				type: "search",
