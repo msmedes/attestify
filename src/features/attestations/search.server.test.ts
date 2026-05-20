@@ -58,6 +58,19 @@ describe("searchCorpus", () => {
 		});
 	});
 
+	it("reuses the validated vector index across repeated searches", async () => {
+		await searchCorpus("What is the mousetrap in Hamlet?");
+		const result = await searchCorpus("What does Raskolnikov bring to Alyona?");
+		const vectorIndexTiming = result.aiTrace?.timing.spans.find((span) =>
+			span.label.endsWith("-vector-index"),
+		);
+
+		expect(vectorIndexTiming).toMatchObject({
+			label: "reused-vector-index",
+			count: listSpans().length,
+		});
+	});
+
 	it("returns source-verified citations for a non-play source", async () => {
 		const result = await searchCorpus("What does Raskolnikov bring to Alyona?");
 

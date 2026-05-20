@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -50,10 +51,15 @@ type SpanIndexMetadata = {
 	section: string;
 	locator: string;
 };
+type SearchableIndexItem = {
+	id: string;
+	source?: SourceDocument;
+	span: SourceSpan;
+	text: string;
+};
 
-const index = new LocalIndex<SpanIndexMetadata>(
-	path.join(process.cwd(), ".data", "span-index"),
-);
+const INDEX_PATH = path.join(process.cwd(), ".data", "span-index");
+const index = new LocalIndex<SpanIndexMetadata>(INDEX_PATH);
 const INDEX_CONFIG_PATH = path.join(
 	process.cwd(),
 	".data",
@@ -71,8 +77,20 @@ const DEFAULT_CITATION_LIMIT = MAX_CITATIONS;
 const MIN_CITATION_SCORE = 0.14;
 const RELATIVE_CITATION_FLOOR = 0.45;
 const DEFAULT_LAZY_EXPANSION_SPAN_LIMIT = 2;
+const INDEX_STATE_KEY = Symbol.for("attestify.search.indexState");
 
-let ensureIndexPromise: Promise<void> | null = null;
+type IndexEnsureStatus = "reused" | "checked" | "rebuilt";
+type IndexEnsureResult = {
+	status: IndexEnsureStatus;
+	items: number;
+	embeddingConfigKey: string;
+};
+type IndexState = {
+	validatedSignature: string | null;
+	promise: Promise<IndexEnsureResult> | null;
+};
+
+const indexState = getIndexState();
 const defaultLazyExpansionCache = new InMemoryExtractionCache();
 
 type SearchCorpusWithQueriesOptions = {
@@ -98,6 +116,19 @@ export type LazyExpansionOptions = {
 
 export type LazyExtractionAttemptSummary =
 	LazyExpansionTraceStep["output"]["attempts"][number];
+
+function getIndexState(): IndexState {
+	const registry = globalThis as unknown as Record<symbol, IndexState>;
+
+	if (!registry[INDEX_STATE_KEY]) {
+		registry[INDEX_STATE_KEY] = {
+			validatedSignature: null,
+			promise: null,
+		};
+	}
+
+	return registry[INDEX_STATE_KEY];
+}
 
 export async function searchCorpus(
 	query: string,
@@ -127,12 +158,13 @@ export async function searchCorpusWithQueries({
 	const startedAt = performance.now();
 	const timingSpans: AiTraceTimingSpan[] = [];
 	const ensureIndexStartedAt = performance.now();
-	await ensureIndex();
+	const indexResult = await ensureIndex();
 	timingSpans.push({
 		stage: "retrieval",
-		label: "ensure-vector-index",
+		label: `${indexResult.status}-vector-index`,
 		category: "application",
 		durationMs: elapsedMs(ensureIndexStartedAt),
+		count: indexResult.items,
 	});
 
 	const prepareStartedAt = performance.now();
@@ -862,17 +894,59 @@ function buildRetrievalDiagnosticRow({
 	};
 }
 
-async function ensureIndex() {
-	ensureIndexPromise ??= ensureIndexCreated().finally(() => {
-		ensureIndexPromise = null;
-	});
-
-	return ensureIndexPromise;
-}
-
-async function ensureIndexCreated() {
+async function ensureIndex(): Promise<IndexEnsureResult> {
 	const spans = listSpans();
 	const embeddingConfig = getEmbeddingConfig();
+	const embeddingKey = embeddingConfigKey(embeddingConfig);
+	const searchableItems = buildSearchableIndexItems(spans);
+	const corpusSignature = getCorpusIndexSignature(searchableItems);
+	const signature = `${embeddingKey}:${spans.length}:${corpusSignature}`;
+
+	if (
+		indexState.validatedSignature === signature &&
+		(await cachedIndexConfigMatches({ embeddingKey, spans, corpusSignature }))
+	) {
+		return {
+			status: "reused",
+			items: spans.length,
+			embeddingConfigKey: embeddingKey,
+		};
+	}
+
+	if (indexState.promise) {
+		await indexState.promise;
+		return ensureIndex();
+	}
+
+	indexState.promise = ensureIndexCreated({
+		spans,
+		searchableItems,
+		embeddingConfig,
+		embeddingKey,
+		corpusSignature,
+		signature,
+	}).finally(() => {
+		indexState.promise = null;
+	});
+
+	return indexState.promise;
+}
+
+async function ensureIndexCreated({
+	spans,
+	searchableItems,
+	embeddingConfig,
+	embeddingKey,
+	corpusSignature,
+	signature,
+}: {
+	spans: SourceSpan[];
+	searchableItems: SearchableIndexItem[];
+	embeddingConfig: EmbeddingConfig;
+	embeddingKey: string;
+	corpusSignature: string;
+	signature: string;
+}): Promise<IndexEnsureResult> {
 	const indexConfig = readIndexConfig();
 	const isCreated = await index.isIndexCreated();
 	const stats = isCreated ? await index.getIndexStats() : null;
@@ -880,9 +954,19 @@ async function ensureIndexCreated() {
 	if (
 		isCreated &&
 		stats?.items === spans.length &&
-		indexConfig?.embeddingConfigKey === embeddingConfigKey(embeddingConfig)
+		indexConfigMatches({
+			indexConfig,
+			embeddingKey,
+			spans,
+			corpusSignature,
+		})
 	) {
-		return;
+		indexState.validatedSignature = signature;
+		return {
+			status: "checked",
+			items: spans.length,
+			embeddingConfigKey: embeddingKey,
+		};
 	}
 
 	console.info(
@@ -902,33 +986,6 @@ async function ensureIndexCreated() {
 		},
 	});
 
-	const searchableItems = spans.map((span) => {
-		const source = findSource(span.sourceId);
-		const text = [
-			source?.title,
-			source?.kind,
-			span.section,
-			span.locator,
-			span.text,
-			...span.attestations.flatMap((attestation) => [
-				attestation.type,
-				attestation.subject,
-				attestation.predicate,
-				attestation.value,
-				attestation.context,
-				attestation.anchorText,
-			]),
-		]
-			.filter(Boolean)
-			.join(" ");
-
-		return {
-			id: span.spanId,
-			source,
-			span,
-			text,
-		};
-	});
 	const embeddings = await embedCorpusTexts({
 		cachePath: EMBEDDING_CACHE_PATH,
 		config: embeddingConfig,
@@ -962,16 +1019,131 @@ async function ensureIndexCreated() {
 	);
 
 	await writeIndexConfig({
-		embeddingConfigKey: embeddingConfigKey(embeddingConfig),
+		embeddingConfigKey: embeddingKey,
 		embeddingConfig,
 		spans: spans.length,
+		corpusSignature,
 	});
+	indexState.validatedSignature = signature;
+
+	return {
+		status: "rebuilt",
+		items: spans.length,
+		embeddingConfigKey: embeddingKey,
+	};
+}
+
+async function cachedIndexConfigMatches({
+	embeddingKey,
+	spans,
+	corpusSignature,
+}: {
+	embeddingKey: string;
+	spans: SourceSpan[];
+	corpusSignature: string;
+}) {
+	if (!(await index.isIndexCreated())) {
+		indexState.validatedSignature = null;
+		return false;
+	}
+
+	const stats = await index.getIndexStats();
+	if (stats.items !== spans.length) {
+		indexState.validatedSignature = null;
+		return false;
+	}
+
+	const indexConfig = readIndexConfig();
+	const matches = indexConfigMatches({
+		indexConfig,
+		embeddingKey,
+		spans,
+		corpusSignature,
+	});
+
+	if (!matches) {
+		indexState.validatedSignature = null;
+	}
+
+	return matches;
+}
+
+function indexConfigMatches({
+	indexConfig,
+	embeddingKey,
+	spans,
+	corpusSignature,
+}: {
+	indexConfig: ReturnType<typeof readIndexConfig>;
+	embeddingKey: string;
+	spans: SourceSpan[];
+	corpusSignature: string;
+}) {
+	return (
+		indexConfig?.embeddingConfigKey === embeddingKey &&
+		indexConfig.spans === spans.length &&
+		indexConfig.corpusSignature === corpusSignature
+	);
+}
+
+function buildSearchableIndexItems(spans: SourceSpan[]): SearchableIndexItem[] {
+	return spans.map((span) => {
+		const source = findSource(span.sourceId);
+		const text = [
+			source?.title,
+			source?.kind,
+			span.section,
+			span.locator,
+			span.text,
+			...span.attestations.flatMap((attestation) => [
+				attestation.type,
+				attestation.subject,
+				attestation.predicate,
+				attestation.value,
+				attestation.context,
+				attestation.anchorText,
+			]),
+		]
+			.filter(Boolean)
+			.join(" ");
+
+		return {
+			id: span.spanId,
+			source,
+			span,
+			text,
+		};
+	});
+}
+
+function getCorpusIndexSignature(items: SearchableIndexItem[]) {
+	const hash = createHash("sha256");
+
+	for (const { id, source, span, text } of items) {
+		hash.update(id);
+		hash.update("\0");
+		hash.update(source?.sourceId ?? "");
+		hash.update("\0");
+		hash.update(source?.kind ?? "");
+		hash.update("\0");
+		hash.update(source?.title ?? "");
+		hash.update("\0");
+		hash.update(span.section);
+		hash.update("\0");
+		hash.update(span.locator);
+		hash.update("\0");
+		hash.update(text);
+		hash.update("\0");
+	}
+
+	return hash.digest("hex");
 }
 
 function readIndexConfig(): {
 	embeddingConfigKey: string;
 	embeddingConfig: EmbeddingConfig;
 	spans: number;
+	corpusSignature?: string;
 } | null {
 	if (!existsSync(INDEX_CONFIG_PATH)) {
 		return null;
@@ -981,6 +1153,7 @@ function readIndexConfig(): {
 		embeddingConfigKey: string;
 		embeddingConfig: EmbeddingConfig;
 		spans: number;
+		corpusSignature?: string;
 	};
 }
 
@@ -988,6 +1161,7 @@ async function writeIndexConfig(config: {
 	embeddingConfigKey: string;
 	embeddingConfig: EmbeddingConfig;
 	spans: number;
+	corpusSignature: string;
 }) {
 	await mkdir(path.dirname(INDEX_CONFIG_PATH), { recursive: true });
 	await writeFile(INDEX_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);
