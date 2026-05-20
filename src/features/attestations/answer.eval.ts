@@ -108,7 +108,8 @@ describeEval(
 		harness: answerHarness,
 		judges: [GroundedAnswerJudge],
 		judgeThreshold: 0.8,
-		skipIf: () => !serverEnv.openAi.apiKey,
+		skipIf: () =>
+			process.env.ATTESTIFY_MODEL_EVALS !== "true" || !serverEnv.openAi.apiKey,
 	},
 	(it) => {
 		it.for([
