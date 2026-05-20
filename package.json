@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
-    "import:corpus": "node scripts/import-gutenberg-corpus.mjs",
+    "import:corpus": "tsx scripts/import-gutenberg-corpus.ts",
     "build": "vite build",
     "preview": "npm run build && npm run start:preview",
     "start:preview": "PORT=3010 node .output/server/index.mjs",

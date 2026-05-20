@@ -26,6 +26,7 @@ export type SourceDocument = {
 	attribution: string;
 	updatedAt: string;
 	sourceUrl?: string;
+	ingestion?: SourceDocumentIngestion;
 	spans: SourceSpan[];
 };
 
@@ -35,6 +36,7 @@ export type SourceSpan = {
 	section: string;
 	locator: string;
 	text: string;
+	ingestion?: SourceSpanIngestion;
 	attestations: Attestation[];
 };
 
@@ -46,6 +48,28 @@ export type Attestation = {
 	value: string;
 	context: string;
 	anchorText: string;
+	ingestion?: VerifiedAttestationIngestion;
+};
+
+export type SourceDocumentIngestion = {
+	connectorId: string;
+	externalSourceId: string;
+	sourceId: string;
+	snapshotId: string;
+	snapshotVersion: string;
+	contentHash: string;
+	extractionRunId?: string;
+	extractorVersion?: string;
+	verifiedAt?: string;
+};
+
+export type SourceSpanIngestion = {
+	spanId: string;
+};
+
+export type VerifiedAttestationIngestion = {
+	status: "verified";
+	method: string;
 };
 
 export type CitationUnit = {

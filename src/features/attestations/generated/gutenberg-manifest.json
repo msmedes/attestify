@@ -12,6 +12,17 @@
       "attribution": "Project Gutenberg eBook #1524",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/1524.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "1524",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:1524-bce35ce6291ba5b8fb5fea32ec1aaed5",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-f81184c937f8d7b9e5358634472e8c25:gutenberg-1524-utf8-48d9fdcfa094c9522683e2be3e42ad8d:11325253bfe09aa0162c3a05457bc8389589d134a434382c-ef7db6225c208d91594772b393f24f6b",
+        "snapshotVersion": "gutenberg-1524-utf8",
+        "contentHash": "11325253bfe09aa0162c3a05457bc8389589d134a434382ca2a3e8f038bb8d28",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-03866f326ccc348145bfccde7ab732eb:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 675,
       "attestations": 1118
     },
@@ -22,6 +33,17 @@
       "attribution": "Project Gutenberg eBook #1533",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/1533.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "1533",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:1533-15310fd04ea64483103071a114d24163",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-dae8bccf224099887eff5c407c34b00a:gutenberg-1533-utf8-097eb67e6c2a8b9f9fe1b0aa44769781:7667b1f350136a84dbc837824de197dde5078e040dc0fbc2-6b2b214bafb3171d21cb44cd4968784a",
+        "snapshotVersion": "gutenberg-1533-utf8",
+        "contentHash": "7667b1f350136a84dbc837824de197dde5078e040dc0fbc271a9afafbfab66c1",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-e2f16d49e756521b73ae0931b6c5cfdb:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 439,
       "attestations": 696
     },
@@ -32,6 +54,17 @@
       "attribution": "Project Gutenberg eBook #2554",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/2554.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "2554",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:2554-c344fdf40e328b7856fdbd48d0681979",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-d7063228e255d521e1d74ae6afdbf984:gutenberg-2554-utf8-909c2b3d05dda1d09d68e699245df17e:ec3762ad25545c299e4c4f300c36630f96e003013e12f3f9-f952adf70b8c73e8c9fee2fdf66d0fc5",
+        "snapshotVersion": "gutenberg-2554-utf8",
+        "contentHash": "ec3762ad25545c299e4c4f300c36630f96e003013e12f3f932e52751a3fb0d13",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-ae5913fae21d129a8b346c90f0d975cc:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 700,
       "attestations": 1524
     },
@@ -42,6 +75,17 @@
       "attribution": "Project Gutenberg eBook #1342",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/1342.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "1342",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:1342-1c0e147e6071fdf6fbdad9b7add2ecac",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-dfbb4098d58f34c6b094082ed08e581c:gutenberg-1342-utf8-3e182e86b06891aafeb0ac50cf71538b:96ea125b84c6e4807b91b8408a102c7436ee0635443a2179-cfa9daea08fd4bc3278cf0485d8dcab6",
+        "snapshotVersion": "gutenberg-1342-utf8",
+        "contentHash": "96ea125b84c6e4807b91b8408a102c7436ee0635443a21795a4b91ad0579359e",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-a03e4f3346ef127c5f1d2f5651b873c1:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 700,
       "attestations": 1414
     },
@@ -52,6 +96,17 @@
       "attribution": "Project Gutenberg eBook #1661",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/1661.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "1661",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:1661-8429476daf79869660e1228853868ae8",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-4859452e298bbb1fa8ab132eb368b126:gutenberg-1661-utf8-3b05d5707cbc4f2b3d6ab7b9c8df5f6e:90977aba373cf7132eb80252a0ac16f4a8c2ddd7bf3ae193-2a12ce315095898f91eb33208653d9ef",
+        "snapshotVersion": "gutenberg-1661-utf8",
+        "contentHash": "90977aba373cf7132eb80252a0ac16f4a8c2ddd7bf3ae1930b7e7da8fac920be",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-940f9f95e5ba4fe83654a1729dc6c6e4:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 700,
       "attestations": 1518
     },
@@ -62,6 +117,17 @@
       "attribution": "Project Gutenberg eBook #11",
       "updatedAt": "2026-05-19",
       "sourceUrl": "https://www.gutenberg.org/ebooks/11.txt.utf-8",
+      "ingestion": {
+        "connectorId": "project-gutenberg",
+        "externalSourceId": "11",
+        "sourceId": "src:project-gutenberg-594b6e88a6ff7b77dd4d5aa376b85d85:11-4fc82b26aecb47d2868c4efbe3581732",
+        "snapshotId": "snapshot:src-project-gutenberg-594b6e88a6ff7b77dd4d5aa376-8c34d39ef6b808e25b0e3dba0c51f610:gutenberg-11-utf8-2cc80878591ce158dc17b659947b3f27:6811c9de77963471d6168e54f8adeb1125638e7bb6eb2f06-96df4a8755362c4cfd7b2d9fefe1e2d0",
+        "snapshotVersion": "gutenberg-11-utf8",
+        "contentHash": "6811c9de77963471d6168e54f8adeb1125638e7bb6eb2f06467f661592241dea",
+        "extractionRunId": "extraction:snapshot-src-project-gutenberg-594b6e88a6ff7b77d-56797d08473feb8e1f402ec3f135fc7f:gutenberg-fixture-import-a5f6337a1a6ea84cc7fcfbbe728f1e7e:1-0-0-92521fc3cbd964bdc9f584a991b89fdd:2026-05-19t00-00-00-000z-9130ef5f5a917693671dc2fb788a7e8e",
+        "extractorVersion": "1.0.0",
+        "verifiedAt": "2026-05-19T00:00:00.000Z"
+      },
       "spans": 675,
       "attestations": 1060
     }
