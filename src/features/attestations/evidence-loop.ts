@@ -49,10 +49,13 @@ export type EvidenceAction = z.infer<typeof evidenceActionSchema>;
 
 export const evidencePlannerOutputSchema = z.object({
 	type: z.enum(["search", "extract", "inspect", "stop"]),
-	queries: z.array(z.string()).max(5).nullable(),
-	exactPhrases: z.array(z.string()).max(6).nullable(),
-	spanIds: z.array(z.string()).max(5).nullable(),
-	reason: z.enum(["enough-evidence", "insufficient-evidence"]).nullable(),
+	queries: z.array(z.string()).max(5).nullable().optional(),
+	exactPhrases: z.array(z.string()).max(6).nullable().optional(),
+	spanIds: z.array(z.string()).max(5).nullable().optional(),
+	reason: z
+		.enum(["enough-evidence", "insufficient-evidence"])
+		.nullable()
+		.optional(),
 });
 
 export type EvidenceLoopBudgets = typeof DEFAULT_BUDGETS;

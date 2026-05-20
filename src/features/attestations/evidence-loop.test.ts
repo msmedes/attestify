@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type EvidenceLoopPlanner, runEvidenceLoop } from "./evidence-loop";
+import {
+	type EvidenceLoopPlanner,
+	evidencePlannerOutputSchema,
+	runEvidenceLoop,
+} from "./evidence-loop";
 import type { SearchResponse } from "./types";
 
 describe("runEvidenceLoop", () => {
@@ -79,6 +83,28 @@ describe("runEvidenceLoop", () => {
 				queries: ["mousetrap Hamlet"],
 				exactPhrases: [],
 			},
+		});
+	});
+
+	it("accepts OpenAI-compatible planner outputs with omitted irrelevant fields", async () => {
+		expect(
+			evidencePlannerOutputSchema.parse({
+				type: "search",
+				queries: ["mousetrap Hamlet"],
+			}),
+		).toEqual({
+			type: "search",
+			queries: ["mousetrap Hamlet"],
+		});
+
+		expect(
+			evidencePlannerOutputSchema.parse({
+				type: "stop",
+				reason: "enough-evidence",
+			}),
+		).toEqual({
+			type: "stop",
+			reason: "enough-evidence",
 		});
 	});
 
