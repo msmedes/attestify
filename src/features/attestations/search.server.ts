@@ -27,6 +27,7 @@ import {
 	runLazyExtractionLifecycle,
 } from "./ingestion";
 import type {
+	AiTraceTimingSpan,
 	Attestation,
 	CitationUnit,
 	LazyExpansionTraceStep,
@@ -109,18 +110,39 @@ export async function searchCorpusWithQueries({
 	citationScoreFloor = MIN_CITATION_SCORE,
 	lazyExpansion,
 }: SearchCorpusWithQueriesOptions): Promise<SearchResponse> {
+	const startedAt = performance.now();
+	const timingSpans: AiTraceTimingSpan[] = [];
+	const ensureIndexStartedAt = performance.now();
 	await ensureIndex();
+	timingSpans.push({
+		stage: "retrieval",
+		label: "ensure-vector-index",
+		category: "application",
+		durationMs: elapsedMs(ensureIndexStartedAt),
+	});
 
+	const prepareStartedAt = performance.now();
 	const normalizedRetrievalQueries = normalizeRetrievalQueries([
 		query,
 		...retrievalQueries,
 	]);
 	const embeddingConfig = getEmbeddingConfig();
 	const scoringQuery = normalizedRetrievalQueries.join(" ");
-	const vectorScores = await queryVectorScores(
+	timingSpans.push({
+		stage: "retrieval",
+		label: "normalize-retrieval-queries",
+		category: "application",
+		durationMs: elapsedMs(prepareStartedAt),
+		count: normalizedRetrievalQueries.length,
+	});
+
+	const vectorResult = await queryVectorScores(
 		normalizedRetrievalQueries,
 		embeddingConfig,
 	);
+	timingSpans.push(...vectorResult.timingSpans);
+	const vectorScores = vectorResult.scores;
+	const rankStartedAt = performance.now();
 	const retrievalChunks = listSpans()
 		.flatMap((span) => {
 			const source = findSource(span.sourceId);
@@ -156,18 +178,34 @@ export async function searchCorpusWithQueries({
 		})
 		.sort((left, right) => right.score - left.score)
 		.slice(0, chunkLimit);
+	timingSpans.push({
+		stage: "retrieval",
+		label: "lexical-vector-rank-spans",
+		category: "application",
+		durationMs: elapsedMs(rankStartedAt),
+		count: retrievalChunks.length,
+	});
 
 	const effectiveLazyExpansion =
 		lazyExpansion === false
 			? null
 			: (lazyExpansion ?? createDefaultLazyExpansionOptions());
+	const lazyExpansionStartedAt = performance.now();
 	const lazyExpansionResult = effectiveLazyExpansion
 		? await runLazyExpansion({
 				options: effectiveLazyExpansion,
 				retrievalChunks,
 			})
 		: null;
+	timingSpans.push({
+		stage: "retrieval",
+		label: "lazy-expansion",
+		category: "application",
+		durationMs: elapsedMs(lazyExpansionStartedAt),
+		count: lazyExpansionResult?.traceStep.output.attempts.length ?? 0,
+	});
 	const promotedBySpanId = lazyExpansionResult?.promotedBySpanId ?? new Map();
+	const citationStartedAt = performance.now();
 	const citationCandidates = retrievalChunks
 		.flatMap((chunk) => {
 			const span = findSpan(chunk.spanId);
@@ -202,13 +240,41 @@ export async function searchCorpusWithQueries({
 		...citation,
 		citationLabel: citationLabel(index),
 	}));
+	timingSpans.push({
+		stage: "retrieval",
+		label: "select-citations",
+		category: "application",
+		durationMs: elapsedMs(citationStartedAt),
+		count: citations.length,
+	});
+	const retrievalTraceStep = {
+		stage: "retrieval" as const,
+		status: "ready" as const,
+		durationMs: elapsedMs(startedAt),
+		input: {
+			queries: normalizedRetrievalQueries,
+		},
+		output: {
+			timing: timingSpans,
+			chunks: retrievalChunks.map((chunk) => ({
+				spanId: chunk.spanId,
+				sourceId: chunk.sourceId,
+				section: chunk.section,
+				locator: chunk.locator,
+				score: chunk.score,
+			})),
+			citationHandles: citations.map((citation) => citation.citationHandle),
+		},
+	};
 
 	return {
 		query,
 		retrievalQueries: normalizedRetrievalQueries,
-		...(lazyExpansionResult
-			? { aiTrace: { steps: [lazyExpansionResult.traceStep] } }
-			: {}),
+		aiTrace: {
+			steps: lazyExpansionResult
+				? [retrievalTraceStep, lazyExpansionResult.traceStep]
+				: [retrievalTraceStep],
+		},
 		answerLines: citations.slice(0, 4).map(formatAnswerLine),
 		citations,
 		retrievalChunks,
@@ -451,15 +517,38 @@ function toLazyExpansionAttempt(
 async function queryVectorScores(
 	queries: string[],
 	embeddingConfig: EmbeddingConfig,
-): Promise<Map<string, number>> {
+): Promise<{
+	scores: Map<string, number>;
+	timingSpans: AiTraceTimingSpan[];
+}> {
 	const vectorScores = new Map<string, number>();
+	const timingSpans: AiTraceTimingSpan[] = [];
 
 	for (const query of queries) {
+		const embedStartedAt = performance.now();
 		const vector = await embedQueryText({
 			config: embeddingConfig,
 			text: query,
 		});
+		timingSpans.push({
+			stage: "retrieval",
+			label: "embed-query",
+			category:
+				embeddingConfig.provider === "openai"
+					? "model-provider"
+					: "application",
+			durationMs: elapsedMs(embedStartedAt),
+			model: embeddingConfig.model,
+		});
+		const vectorQueryStartedAt = performance.now();
 		const results = await index.queryItems(vector, query, 50);
+		timingSpans.push({
+			stage: "retrieval",
+			label: "vector-index-query",
+			category: "application",
+			durationMs: elapsedMs(vectorQueryStartedAt),
+			count: results.length,
+		});
 
 		for (const result of results) {
 			const spanId = result.item.metadata.spanId;
@@ -471,7 +560,10 @@ async function queryVectorScores(
 		}
 	}
 
-	return vectorScores;
+	return {
+		scores: vectorScores,
+		timingSpans,
+	};
 }
 
 function normalizeRetrievalQueries(queries: string[]): string[] {
@@ -801,6 +893,10 @@ function formatAnswerLine(citation: CitationUnit): string {
 	const { attestation } = citation;
 
 	return `${attestation.subject} ${attestation.predicate} ${attestation.value} ${citation.citationLabel}`;
+}
+
+function elapsedMs(startedAt: number): number {
+	return Math.round(performance.now() - startedAt);
 }
 
 function roundScore(score: number): number {
