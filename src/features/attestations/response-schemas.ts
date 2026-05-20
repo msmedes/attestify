@@ -241,6 +241,15 @@ export const queryRunSummarySchema = z.object({
 	answerText: z.string(),
 	citationCount: z.number(),
 	retrievalQueryCount: z.number(),
+	claimVerification: z
+		.object({
+			total: z.number(),
+			supported: z.number(),
+			weak: z.number(),
+			contradicted: z.number(),
+			missing: z.number(),
+		})
+		.optional(),
 }) satisfies z.ZodType<QueryRunSummary>;
 
 export const queryRunDetailSchema = queryRunSummarySchema.extend({
